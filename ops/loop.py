@@ -33,12 +33,24 @@ def run(name):
     return r.returncode
 
 
+def push_journal():
+    """Commit and push the journal and finding files so a dead laptop never loses a day. Record only."""
+    g = lambda *a: subprocess.run(["git", *a], cwd=ROOT, capture_output=True, text=True)
+    g("add", "journal", "docs", "prereg")
+    if g("diff", "--cached", "--quiet").returncode:
+        g("-c", "user.name=irvin", "-c", "user.email=irvin.1605@gmail.com", "commit", "-q", "-m",
+          f"journal: {datetime.now(timezone.utc).strftime('%Y-%m-%d')} sealed")
+    r = g("push", "-q", "origin", "master")
+    print("push", "ok" if r.returncode == 0 else f"FAILED: {r.stderr.strip()[:200]}")
+
+
 def main():
     print("IRV-FLOW LOOP", datetime.now(timezone.utc).isoformat(timespec="seconds"))
     seal_yesterday()
     run("score.py")
     red = run("freshness.py")
     run("readout.py")
+    push_journal()
     sys.exit(1 if red else 0)
 
 
