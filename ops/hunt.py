@@ -1,236 +1,270 @@
-"""THE HUNTER. Runs forever on the keyless public websocket and journals every reclaim it sees.
+"""THE HUNTER. Two merged keyless subscriptions, one incremental state machine per mint, the frozen
+scorer once per signal. Runs forever. ZERO CAPITAL: the sockets only receive.
 
-logsSubscribe(mentions=[pump], processed) on api.mainnet-beta.solana.com, exactly the feed
-wallet-independence's collector used. Decoder mirrored from collect17.py. For every create it
-follows the mint for LOOKBACK_S seconds, runs the frozen reclaim on each new print, fills on
-paper at the NEXT print (honest arm) and at the signal print (zero arm), and writes one line
-per closed position to journal/live/<utc-day>.jsonl. FLOW signals are also appended to
-monitor/flow-alerts.log the second they fire.
-
-ZERO CAPITAL. NO KEY. NO WALLET. NO ORDER. NO POSITION. The socket only receives.
+Feed: logsSubscribe(mentions=[pump.fun], processed) on the public RPC, held TWICE and merged by
+transaction signature, so a server-side close on one stream loses nothing while the other is up.
+Decoder: byte layout of CreateEvent / TradeEvent mirrored from wallet-independence's collect17.py.
+Rule: for every create, the frozen reclaim (src/rule.py) is advanced one print at a time; when it
+fires, score_mint() runs once on the full path to produce the record, and again at close. The
+live state never overrides the frozen scorer — if they disagree, the scorer wins and the state is
+dropped.
 """
 import asyncio
 import base64
+import bisect
 import hashlib
 import json
 import os
 import struct
 import sys
 import time
-from datetime import datetime, timezone
+from collections import deque
 
 import websockets
 
-ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-sys.path[:0] = [os.path.join(ROOT, "src")]
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
+import common as C            # noqa: E402
 import journal as J           # noqa: E402
 import rule as R              # noqa: E402
 
-WS_URL = os.environ.get("IRV_FLOW_WS") or "wss://api.mainnet-beta.solana.com"
+WS_URL = os.environ.get("IRV_FLOW_WS", "wss://api.mainnet-beta.solana.com")
 PUMP = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
-MON = os.path.join(ROOT, "monitor")
-HEARTBEAT = os.path.join(MON, "hunt-heartbeat.json")
-ALERTS = os.path.join(MON, "flow-alerts.log")
-LOG = os.path.join(MON, "hunt.log")
-GRACE_S = 120                    # keep a mint after its lookback so late exits settle
-MAX_PRINTS = 6000                # a mint printing more than this inside 900 s is a bot swarm; dropped
-
+STREAMS = 2
+GRACE_S = 120                       # a mint is kept this long past its lookback so late exits settle
+MAX_PRINTS = 6000                   # more prints than this inside 900 s is a bot swarm; tracking stops
+SEEN_SIGNATURES = 200_000           # dedupe window across the two streams
+HEARTBEAT_S = 10
 _B58 = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 
 def b58(b):
-    n = int.from_bytes(b, "big"); out = bytearray()
+    n, out = int.from_bytes(b, "big"), bytearray()
     while n:
-        n, r = divmod(n, 58); out.append(_B58[r])
-    pad = len(b) - len(b.lstrip(b"\0"))
-    return (_B58[:1] * pad + bytes(reversed(out))).decode()
+        n, r = divmod(n, 58)
+        out.append(_B58[r])
+    return (_B58[:1] * (len(b) - len(b.lstrip(b"\0"))) + bytes(reversed(out))).decode()
 
 
-def _evd(name):
-    return hashlib.sha256(b"event:" + name.encode()).digest()[:8].hex()
+def _discriminator(name):
+    return hashlib.sha256(b"event:" + name.encode()).digest()[:8]
 
 
-D_CREATE, D_TRADE = _evd("CreateEvent"), _evd("TradeEvent")
+D_CREATE, D_TRADE = _discriminator("CreateEvent"), _discriminator("TradeEvent")
 
 
-def _rd_str(raw, o):
-    ln = struct.unpack_from("<I", raw, o)[0]; o += 4
-    return raw[o:o + ln].decode("utf-8", "replace"), o + ln
+def _str(raw, o):
+    n = struct.unpack_from("<I", raw, o)[0]
+    return raw[o + 4:o + 4 + n].decode("utf-8", "replace"), o + 4 + n
 
 
 def decode_create(raw):
     o = 8
-    name, o = _rd_str(raw, o); sym, o = _rd_str(raw, o); _uri, o = _rd_str(raw, o)
-    mint = b58(raw[o:o + 32]); o += 32; o += 32
-    _user = raw[o:o + 32]; o += 32
-    creator = b58(raw[o:o + 32]); o += 32
-    ts = struct.unpack_from("<q", raw, o)[0]
-    return {"mint": mint, "name": name, "symbol": sym, "creator": creator, "timestamp": ts}
+    name, o = _str(raw, o)
+    symbol, o = _str(raw, o)
+    _uri, o = _str(raw, o)
+    mint, creator = b58(raw[o:o + 32]), b58(raw[o + 96:o + 128])
+    ts = struct.unpack_from("<q", raw, o + 128)[0]
+    return {"mint": mint, "name": name, "symbol": symbol, "creator": creator, "timestamp": ts}
 
 
 def decode_trade(raw, slot):
-    o = 8
-    mint = b58(raw[o:o + 32]); o += 32
-    sol, tok = struct.unpack_from("<QQ", raw, o); o += 16
-    is_buy = bool(raw[o]); o += 1
-    user = b58(raw[o:o + 32]); o += 32
-    ts = struct.unpack_from("<q", raw, o)[0]; o += 8
-    vsr, vtr, rsr, rtr = struct.unpack_from("<QQQQ", raw, o)
-    return {"mint": mint, "timestamp": ts, "slot": slot, "is_buy": is_buy, "sol_amount": sol,
-            "token_amount": tok, "user": user, "virtual_sol_reserves": vsr, "virtual_token_reserves": vtr,
-            "real_sol_reserves": rsr, "invariant_ok": vtr - rtr == 279_900_000_000_000,
-            "sol_offset_standard": vsr - rsr == 30_000_000_000}
+    mint = b58(raw[8:40])
+    sol, tok = struct.unpack_from("<QQ", raw, 40)
+    user = b58(raw[57:89])
+    ts, vsr, vtr, rsr, rtr = struct.unpack_from("<qQQQQ", raw, 89)
+    return {"mint": mint, "timestamp": ts, "slot": slot, "is_buy": bool(raw[56]), "sol_amount": sol, "token_amount": tok,
+            "user": user, "virtual_sol_reserves": vsr, "virtual_token_reserves": vtr, "real_sol_reserves": rsr,
+            "invariant_ok": vtr - rtr == 279_900_000_000_000, "sol_offset_standard": vsr - rsr == 30_000_000_000}
 
 
-def _events(logs):
-    for l in logs or []:
-        if l.startswith("Program data: "):
+def events(logs):
+    for line in logs:
+        if line.startswith("Program data: "):
             try:
-                raw = base64.b64decode(l[14:])
-            except Exception:
+                raw = base64.b64decode(line[14:])
+            except ValueError:
                 continue
-            yield raw[:8].hex(), raw
+            yield raw[:8], raw
+
+
+class Mint:
+    __slots__ = ("c0", "name", "symbol", "creator", "keys", "trades", "seen", "run_max", "h1", "t_low", "sig", "flow", "signal_wall", "written")
+
+    def __init__(self, c):
+        self.c0, self.name, self.symbol, self.creator = c["timestamp"], c["name"], c["symbol"], c["creator"]
+        self.keys, self.trades, self.seen = [], [], time.time()
+        self.run_max = self.h1 = self.t_low = self.sig = self.flow = self.signal_wall = None
+        self.written = False
 
 
 class Hunter:
     def __init__(self):
-        self.mints = {}          # mint -> state
+        self.mints = {}
+        self.seen = deque(maxlen=SEEN_SIGNATURES)
+        self.seen_set = set()
         self.stats = {"creates": 0, "trades": 0, "signals": 0, "flow": 0, "closed": 0, "drops": 0,
-                      "started": time.time(), "last_event": None, "connected": False}
-        os.makedirs(MON, exist_ok=True)
+                      "started": time.time(), "last_event": None, "connected": 0, "lag_s": 0.0}
+        os.makedirs(C.MON, exist_ok=True)
 
-    def log(self, s):
-        with open(LOG, "a", encoding="utf-8") as fh:
-            fh.write(f"{datetime.now(timezone.utc).isoformat(timespec='seconds')} {s}\n")
+    def log(self, msg):
+        with open(C.HUNT_LOG, "a", encoding="utf-8") as fh:
+            fh.write(f"{C.stamp()} {msg}\n")
 
-    def on_create(self, c, slot):
+    # ---------------------------------------------------------------- per-event
+    def dedupe(self, sig):
+        if sig in self.seen_set:
+            return False
+        if len(self.seen) == self.seen.maxlen:
+            self.seen_set.discard(self.seen[0])
+        self.seen.append(sig)
+        self.seen_set.add(sig)
+        return True
+
+    def on_create(self, c):
         self.stats["creates"] += 1
-        self.mints[c["mint"]] = {"c0": c["timestamp"], "name": c["name"], "symbol": c["symbol"], "creator": c["creator"],
-                                 "trades": [], "rec": None, "seen": time.time()}
+        self.mints[c["mint"]] = Mint(c)
 
     def on_trade(self, t):
-        st = self.mints.get(t["mint"])
-        if st is None:
+        m = self.mints.get(t["mint"])
+        if m is None or m.written or len(m.trades) >= MAX_PRINTS:
             return
         self.stats["trades"] += 1
-        if len(st["trades"]) >= MAX_PRINTS:
+        self.stats["lag_s"] = round(time.time() - t["timestamp"], 1)
+        dt = t["timestamp"] - m.c0
+        s = R.spot(t)
+        if not 0 <= dt <= R.LOOKBACK_S or s is None:
             return
-        st["trades"].append(t)
-        if st["rec"] is None:
-            path = R.build_path(st["trades"], st["c0"])
-            if len(path) >= 3 and R.detect(path):
-                self.signal(t["mint"], st)
-        elif not st["rec"].get("_written"):
-            self.follow(t["mint"], st)
+        key = (t["timestamp"], t["slot"])
+        i = bisect.bisect_right(m.keys, key)
+        m.keys.insert(i, key)
+        m.trades.insert(i, t)
+        if i < len(m.keys) - 1 and m.sig is None:        # arrived out of order before any signal: replay
+            m.run_max = m.h1 = m.t_low = None
+            for (ts, _slot), tr in zip(m.keys, m.trades):
+                if self.step(t["mint"], m, ts - m.c0, R.spot(tr)):
+                    break
+            return
+        self.step(t["mint"], m, dt, s)
 
-    def signal(self, mint, st):
-        rec = R.score_mint(mint, st["trades"], st["c0"])
-        rec.update({"name": st["name"], "symbol": st["symbol"], "creator": st["creator"],
-                    "signal_wall": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                    "why_zero": "OPEN", "why_honest": "OPEN", "live": True})
-        st["rec"] = rec
+    def step(self, mint, m, dt, s):
+        """Advance the running detect/manage state by one print. True once a signal exists."""
+        if m.sig is None:
+            if m.run_max is None:
+                m.run_max = s
+            elif m.h1 is None:
+                if s > m.run_max:
+                    m.run_max = s
+                elif s <= m.run_max * (1 - R.D):
+                    m.h1, m.t_low = m.run_max, dt
+            elif dt > m.t_low and s > m.h1:
+                m.sig = {"t_entry": dt, "entry": s, "t_fill": None, "fill": None, "zero": None, "honest": None}
+                self.signal(mint, m)
+            return m.sig is not None
+        g = m.sig
+        if g["t_fill"] is None:
+            g["t_fill"], g["fill"] = dt, s
+        if g["zero"] is None and dt > g["t_entry"]:
+            g["zero"] = "STOP" if s <= m.h1 else "TARGET" if s >= g["entry"] * R.MULTIPLE else None
+        if g["honest"] is None and dt > g["t_fill"]:
+            g["honest"] = "STOP" if s <= m.h1 else "TARGET" if s >= g["fill"] * R.MULTIPLE else None
+        if g["zero"] and g["honest"]:
+            self.close(mint, m)
+        return True
+
+    def signal(self, mint, m):
+        rec = R.score_mint(mint, m.trades, m.c0)
+        if rec is None:
+            m.sig = None
+            return
+        m.flow, m.signal_wall = rec["flow"], C.stamp()
         self.stats["signals"] += 1
         if rec["flow"]:
             self.stats["flow"] += 1
-            with open(ALERTS, "a", encoding="utf-8") as fh:
-                f = rec["features"]
-                fh.write(f"{rec['signal_wall']} FLOW {mint} {st['symbol']!r} age {f['age_s']}s run {f['run_x']:.2f}x "
-                         f"buyers {f['buyers']} pace {f['pace']:.2f}/s h1 {rec['h1']:.3e} https://pump.fun/{mint}\n")
+            f = rec["features"]
+            with open(C.ALERTS, "a", encoding="utf-8") as fh:
+                fh.write(f"{m.signal_wall} FLOW {mint} {m.symbol!r} age {f['age_s']}s run {f['run_x']:.2f}x buyers {f['buyers']} "
+                         f"pace {f['pace']:.2f}/s h1 {rec['h1']:.3e} https://pump.fun/{mint}\n")
 
-    def follow(self, mint, st):
-        """Re-run the frozen manage() on the growing path; close once BOTH arms hit a barrier.
-        A HORIZON/NO_FILL reading mid-window is provisional; expire() makes it final at the lookback."""
-        rec = R.score_mint(mint, st["trades"], st["c0"])
-        rec.update({k: st["rec"][k] for k in ("name", "symbol", "creator", "signal_wall", "live")})
-        final = rec["why_zero"] in ("STOP", "TARGET") and rec["why_honest"] in ("STOP", "TARGET")
-        st["rec"] = rec if final else {**rec, "why_zero": "OPEN", "why_honest": "OPEN", "_final": rec}
-        if final:
-            self.close(mint, st)
-
-    def close(self, mint, st):
-        rec = st["rec"].get("_final") or st["rec"]
-        if rec["why_zero"] == "OPEN":                      # signal print was the mint's last print
-            rec = R.score_mint(mint, st["trades"], st["c0"])
-            rec.update({k: st["rec"][k] for k in ("name", "symbol", "creator", "signal_wall", "live")})
-        rec = {k: v for k, v in rec.items() if k != "_final"}
-        rec["closed_wall"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        day = datetime.fromtimestamp(st["c0"] + rec["t_entry_s"], timezone.utc).strftime("%Y-%m-%d")
-        J.append_line("live", day, rec)
+    def close(self, mint, m):
+        m.written = True
+        rec = R.score_mint(mint, m.trades, m.c0)
+        if rec is None:
+            return
+        rec.update({"name": m.name, "symbol": m.symbol, "creator": m.creator, "signal_wall": m.signal_wall,
+                    "live": True, "closed_wall": C.stamp()})
+        J.append_line("live", C.utc_day(m.c0 + rec["t_entry_s"]), rec)
         self.stats["closed"] += 1
-        st["rec"] = {**rec, "_written": True}
 
     def expire(self):
-        now = time.time()
-        for mint in [m for m, s in self.mints.items() if now - s["seen"] > R.LOOKBACK_S + GRACE_S]:
-            st = self.mints.pop(mint)
-            if st["rec"] and not st["rec"].get("_written"):
-                self.close(mint, st)
+        cutoff = time.time() - R.LOOKBACK_S - GRACE_S
+        for mint in [k for k, m in self.mints.items() if m.seen < cutoff]:
+            m = self.mints.pop(mint)
+            if m.sig and not m.written:
+                self.close(mint, m)
 
     def heartbeat(self):
         self.expire()
-        hb = {**self.stats, "watching": len(self.mints), "open": sum(1 for s in self.mints.values() if s["rec"] and not s["rec"].get("_written")),
-              "wall": datetime.now(timezone.utc).isoformat(timespec="seconds"), "pid": os.getpid()}
-        tmp = HEARTBEAT + ".part"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(hb, fh, sort_keys=True)
-        os.replace(tmp, HEARTBEAT)
+        C.write_json(C.HEARTBEAT, {**self.stats, "pid": os.getpid(), "wall": C.stamp(), "watching": len(self.mints),
+                                   "open": sum(1 for m in self.mints.values() if m.sig and not m.written)})
 
-    async def run(self):
-        sub = {"jsonrpc": "2.0", "id": 1, "method": "logsSubscribe",
-               "params": [{"mentions": [PUMP]}, {"commitment": "processed"}]}
-        last_hb, last_log = 0, 0
+    # ---------------------------------------------------------------- streams
+    def handle(self, msg):
+        d = json.loads(msg)
+        if d.get("method") != "logsNotification":
+            return
+        v = d["params"]["result"]["value"]
+        if v.get("err") is not None or not self.dedupe(v.get("signature")):
+            return
+        slot, logs = d["params"]["result"]["context"]["slot"], v.get("logs") or []
+        is_create = any("Instruction: Create" in x for x in logs)
+        for disc, raw in events(logs):
+            if disc == D_TRADE:
+                self.on_trade(decode_trade(raw, slot))
+            elif disc == D_CREATE and is_create:
+                self.on_create(decode_create(raw))
+        self.stats["last_event"] = time.time()
+
+    async def stream(self, idx):
+        sub = json.dumps({"jsonrpc": "2.0", "id": idx, "method": "logsSubscribe",
+                          "params": [{"mentions": [PUMP]}, {"commitment": "processed"}]})
         while True:
             try:
-                async with websockets.connect(WS_URL, ping_interval=20, max_size=None) as ws:
-                    await ws.send(json.dumps(sub))
-                    self.stats["connected"] = True
-                    self.log(f"connected {WS_URL}")
-                    while True:
-                        try:
-                            msg = await asyncio.wait_for(ws.recv(), timeout=5)
-                        except asyncio.TimeoutError:
-                            msg = None
-                        if msg:
-                            d = json.loads(msg)
-                            if d.get("method") == "logsNotification":
-                                v = d["params"]["result"]["value"]
-                                if v.get("err") is None:
-                                    slot = d["params"]["result"]["context"]["slot"]
-                                    logs = v.get("logs") or []
-                                    is_create = any("Instruction: Create" in x for x in logs)
-                                    for dh, raw in _events(logs):
-                                        if dh == D_TRADE:
-                                            self.on_trade(decode_trade(raw, slot))
-                                        elif dh == D_CREATE and is_create:
-                                            self.on_create(decode_create(raw), slot)
-                                    self.stats["last_event"] = time.time()
-                        now = time.time()
-                        if now - last_hb >= 10:
-                            self.heartbeat(); last_hb = now
-                        if now - last_log >= 3600:
-                            self.log(json.dumps({k: v for k, v in self.stats.items() if k != "started"}) + f" watching {len(self.mints)}")
-                            last_log = now
-            except Exception as e:                     # any drop: reconnect, count it, keep hunting
-                self.stats["connected"] = False
+                async with websockets.connect(WS_URL, ping_interval=20, max_size=None, open_timeout=15) as ws:
+                    await ws.send(sub)
+                    self.stats["connected"] += 1
+                    self.log(f"stream {idx} connected")
+                    async for msg in ws:
+                        self.handle(msg)
+            except Exception as e:                      # any drop: count, log, reconnect; the twin stream covers the gap
+                self.stats["connected"] = max(0, self.stats["connected"] - 1)
                 self.stats["drops"] += 1
-                self.log(f"drop {type(e).__name__}: {e}")
-                self.heartbeat()
+                self.log(f"stream {idx} drop {type(e).__name__}: {str(e)[:80]}")
                 await asyncio.sleep(2)
+
+    async def pulse(self):
+        last_log = 0
+        while True:
+            await asyncio.sleep(HEARTBEAT_S)
+            self.heartbeat()
+            if time.time() - last_log >= 3600:
+                self.log(json.dumps({k: v for k, v in self.stats.items() if k != "started"}) + f" watching {len(self.mints)}")
+                last_log = time.time()
+
+    async def run(self):
+        await asyncio.gather(self.pulse(), *(self.stream(i) for i in range(STREAMS)))
 
 
 def another_hunter_is_alive():
-    """Refuse to double-write: a fresh heartbeat from a live python process means a hunter already runs."""
+    hb, age = C.heartbeat()
+    if hb is None or age > 60 or hb.get("pid") == os.getpid():
+        return False
     try:
-        hb = json.load(open(HEARTBEAT, encoding="utf-8"))
-        if time.time() - os.path.getmtime(HEARTBEAT) > 60 or hb.get("pid") == os.getpid():
-            return False
         os.kill(hb["pid"], 0)
         return True
-    except (FileNotFoundError, ValueError, KeyError, OSError):
+    except OSError:
         return False
 
 
 if __name__ == "__main__":
-    if another_hunter_is_alive():
-        sys.exit(0)
-    asyncio.run(Hunter().run())
+    if not another_hunter_is_alive():
+        asyncio.run(Hunter().run())
