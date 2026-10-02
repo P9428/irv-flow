@@ -18,7 +18,7 @@ def test_prereg_sha_pinned():
 
 
 def test_core_matches_mimicry_freeze():
-    assert (R.D, R.MULTIPLE, R.LOOKBACK_S, R.Z_LAMPORTS, R.FEE) == (Fraction(1, 2), Fraction(2), 900, 50_000_000, Fraction(125, 10000))
+    assert (R.D, R.MULTIPLE, R.LOOKBACK_S, R.Z_LAMPORTS, R.FEE) == (Fraction(1, 2), Fraction(2), 900, 1_000_000_000, Fraction(125, 10000))
     assert R.K == Fraction(79, 81) and R.K_TOL == Fraction(1, 100)
 
 
@@ -31,6 +31,11 @@ def test_flow_thresholds_match_prereg():
     text = open(PREREG, encoding="utf-8").read()
     for k, v in R.FLOW.items():
         assert f"`{k}` = {v}" in text, f"{k} not declared as {v} in the prereg"
+
+
+def test_amendment_1_declares_the_size_the_code_uses():
+    text = open(PREREG, encoding="utf-8").read()
+    assert "## AMENDMENT 1" in text and f"`Z_LAMPORTS` = {R.Z_LAMPORTS}" in text
 
 
 def test_frozen_at_is_the_last_capture_on_disk_at_freeze():

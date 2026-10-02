@@ -11,7 +11,7 @@ from fractions import Fraction
 D = Fraction(1, 2)                      # drawdown that freezes H1
 MULTIPLE = Fraction(2)                  # take-profit multiple of entry
 LOOKBACK_S = 900                        # seconds after create inside which everything happens
-Z_LAMPORTS = 50_000_000                 # 0.05 SOL paper size
+Z_LAMPORTS = 1_000_000_000              # 1 SOL paper size (AMENDMENT 1, 2026-10-02; was 0.05 SOL at freeze)
 FEE = Fraction(125, 10000)              # 1.25 % per side, chain-measured (persistence F04)
 K = (1 - FEE) / (1 + FEE)               # round-trip multiplier on the spot ratio
 CREATE_SPOT = Fraction(30_000_000_000, 1_073_000_000_000_000)   # standard curve at create
@@ -165,7 +165,7 @@ def score_mint(mint, trades, c0, capture=None):
     f = features(path, i_e, i_h1, i_low, h1)
     flags = flow_flags(f)
     rec = {
-        "capture": capture, "mint": mint, "c0": c0,
+        "capture": capture, "mint": mint, "c0": c0, "z_lamports": Z_LAMPORTS,
         "t_entry_s": t_e, "h1": _fx(h1), "entry_zero": _fx(entry),
         "exit_zero": _fx(ex), "why_zero": why, "hold_zero_s": t_x - t_e,
         "net_zero": _fx(net_of(entry, ex)), "net_zero_exact": f"{net_of(entry, ex).numerator}/{net_of(entry, ex).denominator}",

@@ -131,3 +131,20 @@ mimicry §58: between −2 % and +1 %.
 `BUYERS_MAX` = 80 · `BIG_BUY_SHARE_MAX` = 1/5 · `BIG_SELL_SHARE_MAX` = 2/5 · `PACE_MAX` = 1 ·
 `DIP_SELLERS_MIN` = 3 · `DIP_TOP_SELLER_SHARE_MAX` = 1/2 · `K_TOL` = 1/100 · `D` = 1/2 · `MULTIPLE` = 2 ·
 `LOOKBACK_S` = 900 · `Z_LAMPORTS` = 50000000 · `FEE` = 125/10000 · `BAR` = +1.0370 %.
+
+---
+
+## AMENDMENT 1 — 2026-10-02, paper size
+
+Operator ruling, verbatim: *"make the paper size 1 sol"*. `Z_LAMPORTS` = 1000000000 (was 50000000).
+
+Disclosure. Every mark is a size-free spot ratio (exit/entry · 79/81 − 1); position size only scales
+the SOL figures, so every SOL number in the readouts, the dashboard and docs/findings/F01 is now 20×
+what it was and nothing else moves. Own-impact is NOT in the mark: mimicry §82 measured it at
+−6.25 % per round trip for 1.00 SOL at create depth and −1.80 % at 0.25 SOL, so at this size every
+SOL figure is an upper bound by roughly that much, and the honest arm's +1.0370 % bar is harder in
+reality than on paper. Records carry `z_lamports` from this amendment on.
+
+S1 does not fire: at the time of this amendment the forward record holds zero honest-filled FLOW
+positions, so nothing was scored under the old size. The 08-28 replication gate is unaffected
+(it compares ratios). FROZEN_SHA re-pinned to this file.
