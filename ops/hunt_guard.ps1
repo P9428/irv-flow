@@ -6,8 +6,8 @@ if (Test-Path $hb) {
     $age = ((Get-Date) - (Get-Item $hb).LastWriteTime).TotalSeconds
     if ($age -lt 120) {
         try {
-            $pid = (Get-Content $hb -Raw | ConvertFrom-Json).pid
-            if ($pid -and (Get-Process -Id $pid -ErrorAction Stop).ProcessName -like "python*") { $alive = $true }
+            $hpid = (Get-Content $hb -Raw | ConvertFrom-Json).pid   # never $pid: PowerShell reserves it for its own process
+            if ($hpid -and (Get-Process -Id $hpid -ErrorAction Stop).ProcessName -like "python*") { $alive = $true }
         } catch { $alive = $false }
     }
 }

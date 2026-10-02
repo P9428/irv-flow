@@ -218,5 +218,19 @@ class Hunter:
                 await asyncio.sleep(2)
 
 
+def another_hunter_is_alive():
+    """Refuse to double-write: a fresh heartbeat from a live python process means a hunter already runs."""
+    try:
+        hb = json.load(open(HEARTBEAT, encoding="utf-8"))
+        if time.time() - os.path.getmtime(HEARTBEAT) > 60 or hb.get("pid") == os.getpid():
+            return False
+        os.kill(hb["pid"], 0)
+        return True
+    except (FileNotFoundError, ValueError, KeyError, OSError):
+        return False
+
+
 if __name__ == "__main__":
+    if another_hunter_is_alive():
+        sys.exit(0)
     asyncio.run(Hunter().run())

@@ -42,9 +42,10 @@ def main():
     # 1 COLLECT
     try:
         hb = json.load(open(HB, encoding="utf-8")); age = now - os.path.getmtime(HB); gap = now - (hb.get("last_event") or 0)
-        drops24 = sum(1 for l in open(HLOG, encoding="utf-8") if " drop " in l and l[:10] == today) if os.path.exists(HLOG) else 0
-        head = 1.0 if (age < 60 and gap < 60) else 0.0
-        stages["COLLECT"] = (head, f"heartbeat {age:.0f} s, last event {gap:.0f} s ago, drops today {drops24}, connected {hb.get('connected')}")
+        hour = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H")
+        drops_h = sum(1 for l in open(HLOG, encoding="utf-8") if " drop " in l and l[:13] == hour) if os.path.exists(HLOG) else 0
+        head = (1.0 if (age < 60 and gap < 60) else 0.0) * max(0.0, 1 - drops_h / 30)      # 30 drops/hour = no headroom
+        stages["COLLECT"] = (head, f"heartbeat {age:.0f} s, last event {gap:.0f} s ago, drops this hour {drops_h}, connected {hb.get('connected')}")
     except (FileNotFoundError, ValueError):
         stages["COLLECT"] = (0.0, "no heartbeat file — the hunter is not running")
         hb = {}
