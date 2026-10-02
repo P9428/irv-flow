@@ -51,6 +51,7 @@ def panel(name, rows, key, hold):
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8")
     live, fwd = J.read("live"), J.read("forward")
     rows = live + fwd
     p("IRV-FLOW READOUT  " + datetime.now(timezone.utc).isoformat(timespec="seconds"))

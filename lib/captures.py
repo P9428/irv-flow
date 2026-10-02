@@ -7,7 +7,9 @@ capture's trades are yielded one record at a time, projected to the fields the r
 import gzip
 import json
 import os
+import re
 
+CAPTURE_ID = re.compile(r"mi-\d{8}T\d{4}Z")         # anything else in snapshots/ (probes, unpinned/) is not a capture
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                      "..", "..", "mimicry", "snapshots"))
 TRADE_FIELDS = ("mint", "timestamp", "slot", "is_buy", "sol_amount", "token_amount", "user",
@@ -20,7 +22,7 @@ def captures(root=ROOT):
     if not os.path.isdir(root):
         return ()
     return tuple(sorted(d for d in os.listdir(root)
-                        if os.path.isdir(os.path.join(root, d))
+                        if CAPTURE_ID.fullmatch(d) and os.path.isdir(os.path.join(root, d))
                         and (os.path.exists(os.path.join(root, d, "creates.jsonl"))
                              or os.path.exists(os.path.join(root, d, "creates.jsonl.gz")))))
 
