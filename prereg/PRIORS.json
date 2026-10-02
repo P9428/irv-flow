@@ -1,0 +1,23 @@
+[
+ {
+  "id": "P1",
+  "p": 0.2,
+  "statement": "FLOW honest mean clears BAR (+1.0370 %) at one of the four looks",
+  "resolves": "the look that declares PASS/FAIL/INCONCLUSIVE (out/looks.json)",
+  "outcome": null
+ },
+ {
+  "id": "P2",
+  "p": 0.65,
+  "statement": "FLOW honest mean > BASE honest mean on the forward corpus at look 1",
+  "resolves": "look 1 readout, both arms",
+  "outcome": null
+ },
+ {
+  "id": "P3",
+  "p": 0.5,
+  "statement": "the hunter fires fewer than 15 FLOW signals per day over the first 14 full days",
+  "resolves": "out/monitor.txt day table after 14 full days",
+  "outcome": null
+ }
+]
