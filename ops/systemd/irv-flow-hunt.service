@@ -1,0 +1,16 @@
+[Unit]
+Description=irv-flow hunter (keyless pump.fun websocket, paper only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/irv-flow
+ExecStart=/usr/bin/python3 /opt/irv-flow/ops/hunt.py
+Restart=always
+RestartSec=3
+MemoryMax=1G
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
