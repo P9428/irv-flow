@@ -1,0 +1,87 @@
+--- a/ops/hunt.py
++++ b/ops/hunt.py
+@@ -8,6 +8,11 @@
+ fires, score_mint() runs once on the full path to produce the record, and again at close. The
+ live state never overrides the frozen scorer — if they disagree, the scorer wins and the state is
+ dropped.
++
++After a position closes its mint's prints are still kept to the end of the lookback, for one purpose: at
++expiry src/excursion.py measures how far price ran and what a later fill would have got, and that goes to
++journal/after/<utc-day>.jsonl. The live line is written at the same moment from the same prints as before;
++nothing in the after-line is read by the rule, a filter, a look or a bar.
+ """
+ import asyncio
+ import base64
+@@ -24,6 +29,7 @@
+ 
+ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
+ import common as C            # noqa: E402
++import excursion as X         # noqa: E402
+ import journal as J           # noqa: E402
+ import rule as R              # noqa: E402
+ 
+@@ -88,12 +94,12 @@
+ 
+ 
+ class Mint:
+-    __slots__ = ("c0", "name", "symbol", "creator", "keys", "trades", "seen", "run_max", "h1", "t_low", "sig", "flow", "signal_wall", "written")
++    __slots__ = ("c0", "name", "symbol", "creator", "keys", "trades", "seen", "run_max", "h1", "t_low", "sig", "flow", "signal_wall", "written", "rec")
+ 
+     def __init__(self, c):
+         self.c0, self.name, self.symbol, self.creator = c["timestamp"], c["name"], c["symbol"], c["creator"]
+         self.keys, self.trades, self.seen = [], [], time.time()
+-        self.run_max = self.h1 = self.t_low = self.sig = self.flow = self.signal_wall = None
++        self.run_max = self.h1 = self.t_low = self.sig = self.flow = self.signal_wall = self.rec = None
+         self.written = False
+ 
+ 
+@@ -126,10 +132,11 @@
+ 
+     def on_trade(self, t):
+         m = self.mints.get(t["mint"])
+-        if m is None or m.written or len(m.trades) >= MAX_PRINTS:
++        if m is None or len(m.trades) >= MAX_PRINTS:
+             return
+-        self.stats["trades"] += 1
+-        self.stats["lag_s"] = round(time.time() - t["timestamp"], 1)
++        if not m.written:
++            self.stats["trades"] += 1
++            self.stats["lag_s"] = round(time.time() - t["timestamp"], 1)
+         dt = t["timestamp"] - m.c0
+         s = R.spot(t)
+         if not 0 <= dt <= R.LOOKBACK_S or s is None:
+@@ -138,6 +145,8 @@
+         i = bisect.bisect_right(m.keys, key)
+         m.keys.insert(i, key)
+         m.trades.insert(i, t)
++        if m.written:                                    # closed: the print is kept for the after-line and reaches no rule
++            return
+         if i < len(m.keys) - 1 and m.sig is None:        # arrived out of order before any signal: replay
+             m.run_max = m.h1 = m.t_low = None
+             for (ts, _slot), tr in zip(m.keys, m.trades):
+@@ -194,6 +203,16 @@
+                     "live": True, "closed_wall": C.stamp()})
+         J.append_line("live", C.utc_day(m.c0 + rec["t_entry_s"]), rec)
+         self.stats["closed"] += 1
++        m.rec = rec
++
++    def after(self, mint, m):
++        """The excursion line, once, when the mint's lookback is over. A failure here is logged and costs only this line."""
++        try:
++            x = X.measure(R.build_path(m.trades, m.c0), m.rec)
++            if x:
++                J.append_line("after", C.utc_day(m.c0 + m.rec["t_entry_s"]), {"mint": mint, "c0": m.c0, "x": x})
++        except Exception as e:
++            self.log(f"after {mint} {type(e).__name__}: {str(e)[:80]}")
+ 
+     def expire(self):
+         cutoff = time.time() - R.LOOKBACK_S - GRACE_S
+@@ -201,6 +220,8 @@
+             m = self.mints.pop(mint)
+             if m.sig and not m.written:
+                 self.close(mint, m)
++            if m.rec:
++                self.after(mint, m)
+ 
+     def heartbeat(self):
+         self.expire()

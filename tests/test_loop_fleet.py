@@ -10,7 +10,7 @@ OUTCOME_TOKENS = ("net_zero", "net_honest", "why_zero", "why_honest", "exit_zero
 def test_every_loop_step_exists():
     src = open(os.path.join(ROOT, "ops", "loop.py"), encoding="utf-8").read()
     steps = re.findall(r'\("([a-z_]+\.py)", "', src)
-    assert len(steps) == 9
+    assert len(steps) == 10
     for s in steps:
         assert os.path.isfile(os.path.join(ROOT, "ops", s)), s
 
@@ -41,4 +41,4 @@ def test_loop_status_if_present_has_every_step():
     p = os.path.join(ROOT, "monitor", "loop-status.json")
     if os.path.exists(p):
         st = json.load(open(p, encoding="utf-8"))
-        assert len(st["steps"]) == 9
+        assert len(st["steps"]) == 10

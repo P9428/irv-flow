@@ -28,6 +28,15 @@ def today():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+def frozen_at(contract):
+    """The instant `contract` froze (ops/freeze.py), or None while it is a draft. Mints created at or before it are SPENT."""
+    try:
+        with open(os.path.join(ROOT, "prereg", f"{contract}-FROZEN_AT"), encoding="utf-8") as fh:
+            return datetime.fromisoformat(fh.read().strip())
+    except FileNotFoundError:
+        return None
+
+
 def heartbeat():
     """The hunter's last heartbeat and its age in seconds, or (None, inf)."""
     try:

@@ -5,13 +5,14 @@
     3 daily_monitor       IS THE RULE FIRING                  reads no outcome
     4 score               WRITE THE FORWARD-CAPTURE JOURNAL   write only
     5 readout             WHAT DID IT PRODUCE                 reads the outcome; non-actionable off-boundary
-    6 calibration_ledger  ARE MY PRIORS ANY GOOD              resolved priors only
+    6 calibration_ledger  ARE MY FORECASTS ANY GOOD           resolves closed windows, misses first
     7 suite               CAN THIS BOX STILL VERIFY ITSELF    full pytest, incl. the 08-28 replication gate
-    8 backup              DO NOT LOSE THE DATA                push to origin; halts loudly on failure
-    9 dashboard           MAKE IT VISIBLE                     renders the above
+    8 digest              WHAT THE OPERATOR READS             day / week / month, one page, pushed with the backup
+    9 backup              DO NOT LOSE THE DATA                push to origin; halts loudly on failure
+   10 dashboard           MAKE IT VISIBLE                     renders the above
 
-Freshness runs first because a reading over a dead hunter is noise. Backup runs before the
-dashboard because losing data beats looking at it. THIS RUNNER DECIDES NOTHING: it executes
+Freshness runs first because a reading over a dead hunter is noise. The digest runs before the backup because the
+push is how it reaches the operator's artifact. Backup runs before the dashboard because losing data beats looking at it. THIS RUNNER DECIDES NOTHING: it executes
 instruments and reports exit codes; every guard fires inside its instrument.
 """
 import os
@@ -30,24 +31,27 @@ STEPS = (
     ("daily_monitor.py", "is the rule firing (reads no outcome)", False),
     ("score.py", "write the forward-capture journal", False),
     ("readout.py", "what did it produce (non-actionable off-boundary)", False),
-    ("calibration_ledger.py", "are my priors any good", False),
+    ("calibration_ledger.py", "are my forecasts any good (resolves closed windows)", False),
     ("suite.py", "can this box still verify itself", False),
+    ("digest.py", "what the operator reads (docs/digest.html)", False),
     ("backup.py", "do not lose the data (push to origin)", True),
     ("dashboard.py", "make it visible", False),
 )
 
 
 def seal_yesterday():
-    """Pin every live day-file older than today, once. Append-only; nothing is rewritten."""
+    """Pin every live, after, gaps and foresight day-file older than today, once. Append-only; nothing is rewritten."""
     pinned = set()
     if os.path.exists(J.MANIFEST):
         with open(J.MANIFEST, encoding="utf-8") as fh:
             pinned = {line.rstrip("\n").split("  ", 1)[1] for line in fh}
-    live = os.path.join(J.JOURNAL, "live")
-    names = sorted(os.listdir(live)) if os.path.isdir(live) else []
-    sealed = [f for f in names if f.endswith(".jsonl") and f[:-6] < C.today() and f"live/{f}" not in pinned]
-    for f in sealed:
-        J.pin(f"live/{f}")
+    sealed = []
+    for mode in ("live", "after", "gaps", "foresight"):
+        d = os.path.join(J.JOURNAL, mode)
+        names = sorted(os.listdir(d)) if os.path.isdir(d) else []
+        sealed += [f"{mode}/{f}" for f in names if f.endswith(".jsonl") and f[:-6] < C.today() and f"{mode}/{f}" not in pinned]
+    for rel in sealed:
+        J.pin(rel)
     return sealed
 
 

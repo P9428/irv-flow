@@ -30,6 +30,32 @@ re-drawn from what settled. The record is `journal/foresight/`; the code is `src
 
 A hit for the wrong reason is a miss that got lucky: file the lesson anyway.
 
+## Where a miss is laid: the market, the filters, or the fill
+
+Every metric forecast is one of three kinds, by what it measures (`kind()` in `src/foresight.py`):
+
+| kind | measures | a miss is laid on |
+|---|---|---|
+| MARKET | `pop` all or base: the water every filter fishes in. Reclaims a day, BASE win rate and mean, target exits, median buyers and pace (`src/market.py`) | the market |
+| SELECTION | `pop` flow or run | the market if the market forecast it named missed too; the filters if that one held |
+| FILL | `fill_over_signal`, or any `x.*` field | the fill |
+
+- **A FLOW or RUN forecast names the market forecast it is conditional on**: `"given": "F-0014"`. The pen refuses one
+  without it. A forecast already in the journal without one takes a `given` line, allowed only before its window opens.
+- The ledger and the digest print the assignment beside each miss. It is a reading of two scores, never a verdict, and
+  it moves no filter: which filter turned away the most winners is debt for the next prereg, not a change to this one.
+- **Per signal.** A `function` line fixes P(net_honest > 0) for every measurable reclaim from its `from` day, as a
+  logistic on the entry-observable flags. It is scored by Brier against the BASE running rate (the win share of every
+  measurable fill before that one). About 270 a day: the fast loop. A new function is a new line with a later `from`.
+- **Excursion and the later fill** (`src/excursion.py`, field `x`): how far price ran for and against the honest entry
+  before the exit and after it, and the fill and net one and two seconds after the signal. The live journal keeps no
+  prints, so `x` exists only from the day the hunter writes `journal/after/` (`docs/loop/hunt-excursion.patch`);
+  forward-only, read by no rule.
+- **The haircut** (`market.haircut`): one standing number for honest arm minus real taker = latency + own impact.
+  Seeded −3.70 pp (the operator's figure; not found in mimicry as a latency cost on 2026-10-03) and −6.25 % at 1 SOL
+  (mimicry `out/mi86-create-own-impact.txt`); the latency half becomes the measured mean of `x.lag_2s` at 300 fills.
+  The readout and the digest print every honest figure with it and without. Looks read the honest arm as frozen.
+
 ## Rules
 
 - **Forward only.** A window opens the UTC day after the forecast is written or later; `add` refuses otherwise,
@@ -42,9 +68,10 @@ A hit for the wrong reason is a miss that got lucky: file the lesson anyway.
 - **One open test per belief.** Two tests on overlapping evidence would move the credence twice for one fact.
 - **Credence stays inside [0.02, 0.98].** A belief at 0 or 1 can no longer learn.
 - **RULE 8 applies.** The operator runs `blind`, writes his number with `twin`, then reads the agent's. Two
-  forecasters on one question is the only way to know whose judgment to weight on what.
+  forecasters on one question is the only way to know whose judgment to weight on what. The digest lists the open
+  forecasts he has not answered and shows nobody's number for them.
 - **Numbers are fractions** (0.01 = 1 %), days are full UTC days, populations are `all` (every reclaim),
-  `base` (measurable curves), `flow` (the hunted trade). One row per mint.
+  `base` (measurable curves), `flow` (the hunted trade), `run` (IF-02: measurable, 2–3× run band). One row per mint.
 
 ## What a forecast looks like (`add` takes a JSON list of these)
 
@@ -58,7 +85,12 @@ A hit for the wrong reason is a miss that got lucky: file the lesson anyway.
  "m": {"pop": "base", "stat": "frac", "field": "net_honest", "gt": 0, "from": "2026-10-04", "n": 500},
  "because": "...", "seen": "...", "if_low": "...", "if_high": "..."}
 {"e": "lesson", "who": "agent", "on": ["F-0003"], "cause": "regime", "text": "...", "owes": "..."}
+{"e": "given", "id": "F-0001", "on": "F-0011", "because": "..."}
+{"e": "function", "who": "agent", "from": "2026-10-04", "spec": {"b": -1.77, "w": {"pace": 0.77, "...": 0}}, "because": "...", "seen": "..."}
 ```
+
+A lesson is drawn from resolved forecasts, or from a stated belief (`"on": ["B5"]`) when the debt is known before
+anything resolves. `count` and `per_day` with `gt` / `eq` count only the rows that hit (target exits a day).
 
 Without `test`, a binary forecast carries its own `p`. Without `m`, it carries `due` and `by` and is settled
 with `resolve`, citing the artifact. Metric grammar: `measure()` in `src/foresight.py`.
