@@ -1,0 +1,1 @@
+{"at": "2026-10-06T15:29:50+00:00", "id": "A-0001", "what": "IF-03 goes live: once out/looks-IF-02.json records look 2, restart the hunter through HUNT GUARD (stop pid, the guard restarts it) so it carries the cap measure (src/excursion.py); journal the restart gap in journal/gaps"}

@@ -1,6 +1,7 @@
 # Registers the workstation tasks through ~/ops/run-hidden.vbs (no console pop-ups), same as the siblings.
 #   irv-flow - HUNT GUARD : at logon and every 5 minutes, keeps ops/hunt.py alive 24/7
 #   irv-flow - LOOP       : daily 05:20 local: seal, score forward captures, gate, read out, build the digest, push
+#   irv-flow - MORNING    : daily 06:00 local: MR-01, the morning scan, after the LOOP and before board MORNING 07:10
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $vbs = Join-Path $env:USERPROFILE "ops\run-hidden.vbs"
 $bash = "C:\Program Files\Git\bin\bash.exe"
@@ -20,5 +21,13 @@ Register-ScheduledTask -TaskName "irv-flow - HUNT GUARD" -Action $guardAction -T
 $loopAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument $loopArgs
 $loopTrigger = New-ScheduledTaskTrigger -Daily -At 05:20
 Register-ScheduledTask -TaskName "irv-flow - LOOP" -Action $loopAction -Trigger $loopTrigger -Settings $settings -Force | Out-Null
+
+$morningArgs = "//B //Nologo `"$vbs`" `"$bash`" -lc `"cd $wsroot && python ops/morning.py build > monitor/morning.log 2>&1`""
+$morningAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument $morningArgs
+$morningTrigger = New-ScheduledTaskTrigger -Daily -At 06:00
+$morningSettings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -StartWhenAvailable -WakeToRun
+$s4u = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType S4U
+Register-ScheduledTask -TaskName "irv-flow - MORNING" -Action $morningAction -Trigger $morningTrigger -Settings $morningSettings -Principal $s4u -Force | Out-Null
+Export-ScheduledTask -TaskName "irv-flow - MORNING" | Out-File -Encoding utf8 (Join-Path $env:USERPROFILE "ops\task-backup\irv-flow - MORNING.xml")
 
 Get-ScheduledTask -TaskName "irv-flow - *" | ForEach-Object { "{0,-24} {1}" -f $_.TaskName, $_.State }
