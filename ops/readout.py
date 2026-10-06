@@ -124,6 +124,28 @@ def if02(L, cut=0.0):
     economic(L, hr, -cut, "RUN")
 
 
+def if03(L, h):
+    """IF-03, the reclaim bought only at H1 or better, forward of its own freeze, on lines the hunter measured for it."""
+    t0 = C.frozen_at("IF-03")
+    L += ["", "IF-03 CAP — every measurable reclaim, bought only at H1 or better 2-10 s after the signal (prereg/IF-03-PREREGISTRATION.md)"]
+    if t0 is None:
+        L.append("  DRAFT: not frozen. Nothing is scored until `python ops/freeze.py IF-03` pins it.")
+        return
+    fwd = [r for r in F.rows() if r["c0"] > t0.timestamp()]
+    base = [r for r in fwd if F.POPS["base"](r)]
+    seen = [r for r in base if r.get("x", {}).get("cap_v")]
+    cap = [{**r, "net_cap": r["x"]["cap_net"], "hold_cap_s": r["x"]["cap_hold_s"], "why_cap": r["x"]["cap_why"],
+            "exit_cap": r["h1"] * (1 + r["x"]["cap_exit"])} for r in seen if "cap_net" in r["x"]]
+    L.append(f"  forward of {t0.isoformat()}: {len(base)} measurable reclaims, {len(seen)} measured for the cap "
+             f"(+{len(base) - len(seen)} written before the hunter carried it), CAP filled {len(cap)}")
+    hc = panel(L, "cap arm (at or below H1, 2-10 s late, frozen exits)", cap, "cap")
+    if hc:
+        panel(L, f"  after own impact ({h['impact'] * 100:+.2f} pp)", cap, "cap", h["impact"])
+    honest(L, "BASE measured for the cap, honest arm (control, never taken)", seen, h["total"])
+    look(L, hc, "CAP", os.path.join(C.OUT, "looks-IF-03.json"))
+    economic(L, hc, -h["impact"], "CAP")
+
+
 def main():
     live, fwd = J.read("live"), J.read("forward")
     rows = live + fwd
@@ -158,6 +180,7 @@ def main():
     look(L, hf)
     economic(L, hf, MK.economic_bar(h))
     if02(L, h["total"])
+    if03(L, h)
     diagnostics(L, F.rows())
     L += ["", C.FOOTER]
     C.emit("readout", L)

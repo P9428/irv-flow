@@ -10,7 +10,9 @@ sha-pinned in `prereg/FROZEN_SHA`. Everything on disk at freeze (`prereg/FROZEN_
 IF-02: the same reclaim on the 2–3× run band alone, same hunter, its own section of the readout and its own looks
 (`out/looks-IF-02.json`). Contract: `prereg/IF-02-PREREGISTRATION.md`, pinned by `python ops/freeze.py IF-02` in
 `prereg/IF-02-FROZEN_AT` + `IF-02-FROZEN_SHA`; mints created at or before that instant are SPENT for it.
-IF-01 and IF-02 are never pooled.
+IF-03: the same reclaim on every measurable curve, bought only at H1 or better 2–10 s after the signal (`src/excursion.py` cap_*),
+frozen 2026-10-06 (`prereg/IF-03-PREREGISTRATION.md`, `IF-03-FROZEN_*`, `out/looks-IF-03.json`); live from the hunter's first restart
+after IF-02 look 2 (morning commitment A-0001). IF-01, IF-02 and IF-03 are never pooled.
 
 ## Rules that bind every session
 1. ZERO CAPITAL. No key, wallet, order or position, machine-checked. The socket only receives.
