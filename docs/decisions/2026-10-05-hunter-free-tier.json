@@ -1,0 +1,83 @@
+{
+ "as_of": "2026-10-05",
+ "slug": "hunter-free-tier",
+ "decision": "The public RPC cuts the hunter's streams and then refuses it with HTTP 413; a paid feed is out of reach. Restart the hunter now on the instrumented code with two streams, restart it on one stream, wait for a natural restart, or add a free keyed failover?",
+ "asked_by": "the operator, 2026-10-05: 'fix this' on the 413 report, then 'I don't have the funds for that right now. We need to figure out how we can make this work on the free tier'",
+ "looked": [
+  "monitor/hunt.log 2026-10-02 16:31Z to 2026-10-05 15:28Z: 854 cuts (286 a day), 720 of them absorbed by the twin stream, 134 windows with both streams down (44.8 a day), 343 blind seconds a day, median 2 s, p90 30 s, longest 2 m 24 s; 1,001 refusals with HTTP 413",
+  "journal/live since 2026-10-02 20:36Z: 330 of 6,660 records (5.0 %) have a both-down window inside the path, 153 (2.3 %) at or before the signal; mints created inside a window are not followed at all",
+  "a 90-minute receive-only diagnostic on one extra connection, 13:58Z to 15:28Z: every cut is a server Close frame whose code is outside RFC 6455 (websockets raises ProtocolError 'invalid status code' and answers 1002); the 413 that follows carries x-ratelimit-tier free, x-ratelimit-endpoint-remaining -19570 recovering about 80 a second, retry-after 30, pubsub-limit 10 with 7 remaining while three subscriptions were open",
+  "a 30-second sample: 350 messages a second, 82 % failed transactions, about 400 KiB/s, about 1 TB a month per stream",
+  "five other keyless endpoints probed from this machine (PublicNode, dRPC, Ankr, GetBlock, Blast): none serves logsSubscribe here; Helius answers 401 without a key",
+  "provider pricing: Helius WSS 2 credits per 0.1 MB, free plan 1M credits; QuickNode, Triton, Chainstack all above zero for this volume",
+  "ops/hunt.py as patched in this session and tests/test_hunt_gaps.py; python -m pytest 48 passed including the 08-28 gate",
+  "prereg/IF-01-PREREGISTRATION.md section 2 (a keyless logsSubscribe on the public RPC) and V4 (a RED gap of 10 min is logged, never backfilled)",
+  "NOT looked: whether the meter is in bytes, messages or something else; the meter's value at the moment of a cut rather than at the next handshake; whether a cut's rate falls when the IP draws less"
+ ],
+ "who_profits": "Claude first: Claude wrote the patched hunter and the diagnostic, and a restart puts its own code live the moment it was written; it also ran the extra connection that drew on the same IP budget during the hunter's busiest hour. The check is that the one-stream trial, the change Claude's first read pointed at, is ranked behind the measurement because the twin absorbs 84 % of cuts, and that the restart is done by the scheduled guard, not by this session, after a session-started hunter died without cause on 2026-10-03. The operator: wants the hunter whole at zero cost; a restart costs the mints watched at that moment. Nobody else: no counterparty, zero capital.",
+ "claims": [
+  {"id": "F01", "layer": "L0", "label": "FACT", "text": "Every cut is a server-side Close with a non-RFC code; the client's 1002 is its answer, not the cause. A lenient client would not keep the stream",
+   "src": [["disk", "alive", "diag1002.log: ConnectionClosedError <- ProtocolError('invalid status code'); websockets/frames.py Close.check", "2026-10-05 14:27Z and 13 more cuts"]]},
+  {"id": "F02", "layer": "L0", "label": "FACT", "text": "The 413 is a per-IP free-tier meter overdrawn: endpoint-remaining -19570, retry-after 30, pubsub-remaining 7 of 10 with three subscriptions open from this IP",
+   "src": [["disk", "alive", "diag1002.log handshake headers", "2026-10-05 14:27:44Z"]]},
+  {"id": "F03", "layer": "L0", "label": "FACT", "text": "Two streams: 286 cuts a day, 84 % absorbed by the twin, 343 blind seconds a day, 5.0 % of records touched",
+   "src": [["disk", "alive", "monitor/hunt.log; journal/live", "counted 2026-10-05"], ["arith", "alive", "720 of 854; 134 windows over 2.99 days", ""]]},
+  {"id": "F04", "layer": "L0", "label": "FACT", "text": "The patched hunter journals every both-down window to journal/gaps, logs the meter on every handshake and refusal, honours retry-after, takes IRV_FLOW_STREAMS (default 2) and no longer miscounts a live twin when the other is refused; 48 tests green",
+   "src": [["disk", "alive", "ops/hunt.py; tests/test_hunt_gaps.py; pytest", "2026-10-05"]]},
+  {"id": "F05", "layer": "L0", "label": "FACT", "text": "The operator has no funds for a paid feed",
+   "src": [["operator", "alive", "2026-10-05: 'I don't have the funds for that right now'", ""]]},
+  {"id": "I01", "layer": "L2", "label": "INFERENCE", "text": "One stream halves the IP's draw but loses the twin that absorbs 84 % of cuts: it wins only if the cut rate per connection falls by more than half, and nothing on disk says whether cuts follow the meter",
+   "src": [["join", "alive", "F02, F03", ""]]},
+  {"id": "I02", "layer": "L2", "label": "INFERENCE", "text": "The meter read at each reconnect after a cut tells whether cuts come with the budget overdrawn; the patched hunter records exactly that, so one day on two streams answers I01 without betting the record on it",
+   "src": [["join", "alive", "F04, I01", ""]]},
+  {"id": "A01", "layer": "L2", "label": "ASSUMPTION", "text": "A restart costs the mints watched at that moment, about 480, the same order as two hours of blind windows",
+   "src": [["assumed", "alive", "heartbeat watching 480; the 2026-10-03 restart record", "no count of what they would have signalled"]]},
+  {"id": "H01", "layer": "L2", "label": "HYPOTHESIS", "text": "The cuts are the meter: drawing half as much would cut the cut rate by more than half",
+   "src": [["hypothesis", "alive", "F02; cuts are near zero from 07Z to 11Z when the feed is light", ""], ["hypothesis", "dead", "F03", "single-stream cuts with the twin up are the common case, which a per-IP budget alone does not predict"]]},
+  {"id": "U01", "layer": "L0", "label": "UNKNOWN", "text": "The meter's unit and refill; whether a keyed free failover would be served at all on the free plan's websocket limits", "src": []}
+ ],
+ "options": [
+  {"id": "A-restart-two-streams-measure", "do": "Stop the hunter and let the scheduled guard start the patched one on two streams; journal the restart gap; for 24 h read the meter logged at every post-cut handshake. If most post-cut meters are negative, a one-stream trial is the next decision; if not, the budget is not the driver and two streams stay",
+   "label": "INFERENCE", "basis": "I02, F04, F03",
+   "fails_if": "the guard does not restart it promptly and the gap grows past the watched mints; or the patched code faults live in a way the tests did not reach; or a day of meters is ambiguous and buys nothing",
+   "survivable": true, "reversible": true, "competence": "inside",
+   "system_effect": "a feed change is measured on the instrument before it is bet on the record; every outage from now on is in journal/gaps"},
+  {"id": "B-restart-one-stream", "do": "Restart the patched hunter now with IRV_FLOW_STREAMS=1 and compare blind seconds a day against 343",
+   "label": "HYPOTHESIS", "basis": "H01",
+   "fails_if": "the cut rate per connection holds and every cut the twin used to absorb becomes a blind window: about 143 cuts a day at 2 s or more, worse than today",
+   "survivable": true, "reversible": true, "competence": "inside",
+   "system_effect": "the hunter's redundancy is traded away on a contested hypothesis"},
+  {"id": "C-wait-natural-restart", "do": "Leave pid 20212 running; the patch goes live whenever the guard or a logon next starts the hunter",
+   "label": "FACT", "basis": "F03",
+   "fails_if": "outages keep going unjournalled and unmeasured for an unknown span, 5 % of records touched with no record of which",
+   "survivable": true, "reversible": true, "competence": "inside",
+   "system_effect": "a fix sits unshipped until chance ships it"},
+  {"id": "D-free-keyed-failover", "do": "Add a third stream on the Helius free plan that connects only while both public streams are down, about 100 MB a day against 1M credits a month",
+   "label": "HYPOTHESIS", "basis": "U01; F02",
+   "fails_if": "the free plan's websocket limits refuse it, or the failover's own reconnect is too slow to cover a 2 s window; and it needs a key the prereg's 'keyless' feed excludes, so an amendment and a re-pin",
+   "survivable": true, "reversible": true, "competence": "edge",
+   "veto": "rule 2: the prereg names a keyless feed; the change waits on an amendment and the operator's signup, neither of which exists",
+   "system_effect": "a second provider enters the record; every record must say which feed saw its prints"},
+  {"id": "E-paid-feed", "do": "Move the hunter to a paid feed",
+   "label": "FACT", "basis": "F05",
+   "fails_if": "there are no funds",
+   "survivable": true, "reversible": true, "competence": "inside",
+   "veto": "F05: no funds; and rule 2, the prereg names the public RPC",
+   "system_effect": "the record's cost floor rises above zero"}
+ ],
+ "split": {
+  "reversible_now": "the restart on two streams with the patched code: IRV_FLOW_STREAMS and the code both revert by a restart",
+  "irreversible_gated": "the mints watched at the restart are lost and never backfilled. It waits on: the suite green with the 08-28 gate, the diagnostic connection closed so the IP is back to two subscriptions, and the operator's instruction to make it work on the free tier"
+ },
+ "recommendation": {
+  "id": "R01", "option": "A-restart-two-streams-measure", "label": "INFERENCE",
+  "text": "RULED: restart the patched hunter now on two streams through the guard, journal the restart gap, and read the meter at every post-cut handshake for 24 h before touching the stream count. One stream (B) is the obvious move and the likely wrong one: the twin absorbs 84 % of cuts and H01 is contested. Waiting (C) leaves the outages unrecorded. The keyed failover (D) and a paid feed (E) are vetoed on the prereg and on funds.",
+  "src": [["ruling", "alive", "F01, F02, F03, F04, F05, I01, I02", "B rests on a contested hypothesis; C forgoes the record; D and E vetoed"]]
+ },
+ "gates": [
+  {"name": "suite-green", "op": "ge", "field": "tests_passed", "bar": 48, "measured": 48, "from": "python -m pytest, 2026-10-05, after the last change to ops/hunt.py"},
+  {"name": "known-answer-0828", "op": "ge", "field": "gate_0828_green", "bar": 1, "measured": 1, "from": "tests/test_known_answer_0828.py in that run"},
+  {"name": "diagnostic-closed", "op": "le", "field": "extra_connections_open", "bar": 0, "measured": 0, "from": "diag1002.py exited 0 at 15:28Z"},
+  {"name": "operator-asked", "op": "ge", "field": "operator_asked_free_tier_fix", "bar": 1, "measured": 1, "from": "the operator, 2026-10-05: 'make this work on the free tier'"}
+ ]
+}
