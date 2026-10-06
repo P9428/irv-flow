@@ -5,7 +5,8 @@ Order of the report: what resolved this run · every miss with what its author s
 would mean, where the miss is laid (market, filters or fill) and whether its lesson has been written · the score ·
 the per-signal function against the BASE running rate · the market by day · the haircut · the beliefs and how far
 each has moved · what is still open, by kind · what the next leg owes. out/foresight-training.jsonl is the same
-record, one forecast per line (open ones with `resolved` null), joined to its reasoning, outcome, score and lessons.
+record, one forecast per line (open ones with `resolved` null), joined to its reasoning, outcome, score and lessons,
+then one line per trade the journal has scored, joined to the trade's full record from the live journal.
 
 Brier = mean((p − outcome)²), 0.25 is always saying 50 %. bits = −log2(p given to what happened), 1.0 is a coin.
 An 80 % interval is calibrated when 8 in 10 land inside; z is the miss in the forecaster's own sigma.
@@ -44,8 +45,10 @@ def score_lines(done):
     return L or ["  nothing resolved yet; n < 5 per forecaster is a number, not evidence"]
 
 
-def training(preds):
-    """Every forecast, one line each. An open one carries `resolved` null: the file was empty until the first window closed."""
+def training(preds, rs):
+    """Every forecast, one line each. An open one carries `resolved` null: the file was empty until the first window closed.
+    Then every scored trade: the function's P at entry, its rival, what happened, and the trade's full live record
+    (flags, features, both arms' outcomes, the fill, the excursion), null where the record is gone."""
     path = os.path.join(C.OUT, "foresight-training.jsonl")
     os.makedirs(C.OUT, exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
@@ -57,6 +60,12 @@ def training(preds):
                         "reading": F.reading(p) if r and r["y"] is not None else "",
                         "lessons": [{k: l.get(k) for k in ("id", "cause", "text", "owes")} for l in p["lessons"]]})
             fh.write(json.dumps(row, sort_keys=True) + "\n")
+        by = {r["mint"]: r for r in rs}
+        for t in F.trades().values():
+            rec = by.get(t["mint"])
+            fh.write(json.dumps({"id": f"trade/{t['mint']}", "kind_of": "trade", "at": t["at"], "day": t["day"], "fn": t["fn"],
+                                 "p": t["p"], "rivals": {"running": t["running"]}, "y": t["y"], "brier": t["brier"],
+                                 "record": {k: v for k, v in rec.items() if k != "mint"} if rec else None}, sort_keys=True) + "\n")
 
 
 def brier(v, i):
@@ -89,6 +98,7 @@ def market_lines(rs):
 def main():
     today = C.today()
     fresh = {r["id"] for r in F.settle_due(today)}
+    wrote = F.score_trades(today)
     beliefs, preds, lessons = F.fold()
     rs = F.rows()
     done = [p for p in preds.values() if p["res"]]
@@ -105,7 +115,9 @@ def main():
     L += [] if misses else ["  none"]
     L += ["", "SCORE"] + score_lines(scored)
     L += [f"  {p['id']} {p['who']:8s} {said(p)} -> {got(p)}   {p['q'][:110]}" for p in done if p not in misses]
-    L += signal_lines(rs) + market_lines(rs) + ["", "HAIRCUT — " + MK.haircut_text(MK.haircut(rs))]
+    L += signal_lines(rs) + [f"  TRADES IN THE JOURNAL: {len(F.trades())} scored from {F.TRADES_FROM}, {len(wrote)} written this run; "
+                             "each is a line of out/foresight-training.jsonl with its full record"]
+    L += market_lines(rs) + ["", "HAIRCUT — " + MK.haircut_text(MK.haircut(rs))]
     L += ["", "MODEL — credence now (at first statement), and the open forecast that can move it"]
     for b in beliefs.values():
         test = next((p["id"] for p in preds.values() if p["res"] is None and p.get("test", {}).get("belief") == b["id"]), None)
@@ -124,7 +136,7 @@ def main():
           + (f"  -> {x['outcome']}" if x["outcome"] is not None else f"  (resolves: {x['resolves'][:50]})") for x in priors]
     L.append(f"  Brier {sum((x['p'] - x['outcome']) ** 2 for x in resolved) / len(resolved):.4f} over n={len(resolved)} resolved (0.25 = coin; n<5 is a number, not evidence)"
              if resolved else f"  Brier: nothing resolved yet ({len(priors)} open priors)")
-    training(preds)
+    training(preds, rs)
     C.emit("calibration", L)
 
 

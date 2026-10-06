@@ -35,7 +35,7 @@ def test_the_journal_on_disk_was_written_forward():
             p = preds[ev["id"]]
             assert p["res"] is None and ev["at"][:10] > p.get("m", {}).get("to", ""), ev["id"]
         elif not ev.get("was"):
-            F.check(ev, beliefs, preds, ev["at"][:10])
+            F.check(ev, beliefs, preds, ev["at"][:10], past)
         past.append(ev)
     assert [p for p in F.fold(past)[1]] == [f"F-{i + 1:04d}" for i in range(len(F.fold(past)[1]))]
 

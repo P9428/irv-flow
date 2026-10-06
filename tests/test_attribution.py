@@ -172,6 +172,38 @@ def test_a_function_scores_every_measurable_fill_against_the_running_rate(journa
     assert F.fold()[1] == {}                                                     # a function is not a forecast and takes no F id
 
 
+def test_every_trade_from_trades_from_enters_the_journal_once_its_day_is_over_with_its_full_record(journal, monkeypatch):
+    F.add([{"e": "function", "who": "agent", "from": "2999-01-02", "spec": {"b": 0.0, "w": {"pace": 1.0}}, **WHY}])
+    journal([row("a", 1, net=0.5), row("b", 2), row("c", 2, net=0.5, pace=False), row("d", 3), row("e", 3, net=None)])
+    monkeypatch.setattr(C, "today", lambda: "2999-01-03")
+    wrote = F.score_trades("2999-01-03")
+    assert [(t["mint"], t["day"], t["fn"], t["y"]) for t in wrote] == [("b", "2999-01-02", "P-0001", False), ("c", "2999-01-02", "P-0001", True)]
+    assert wrote[0]["p"] == pytest.approx(1 / (1 + math.exp(-1))) and wrote[0]["running"] == 1.0 and wrote[1]["running"] == 0.5
+    assert F.score_trades("2999-01-03") == []                                    # once; day 3 is not over
+    with pytest.raises(ValueError):
+        F.add([dict(wrote[0], at=None)])                                         # a trade is scored once
+    with pytest.raises(ValueError):
+        F.add([dict(wrote[0], mint="z", brier=0.0)])                             # p, y and brier must agree
+    monkeypatch.setattr(C, "today", lambda: "2999-01-04")
+    assert [t["mint"] for t in F.score_trades("2999-01-04")] == ["d"]
+    beliefs, preds, _ = F.fold()
+    calibration_ledger.training(preds, F.rows())
+    with open(os.path.join(C.OUT, "foresight-training.jsonl"), encoding="utf-8") as fh:
+        rows = [json.loads(line) for line in fh]
+    assert [r["id"] for r in rows] == ["trade/b", "trade/c", "trade/d"]
+    assert rows[1]["record"]["net_honest"] == 0.5 and rows[1]["record"]["flags"]["pace"] is False and rows[1]["rivals"] == {"running": 0.5}
+
+
+def test_every_trade_in_the_journal_on_disk_re_derives_from_the_live_journal():
+    """The journal's trades are the function's own reading of the hunter's record: p, rival and outcome, mint for mint."""
+    scored = F.trades()
+    derived = {r["mint"]: (day, fn["id"], p, run, y) for r, day, fn, p, run, y in F.in_force(F.rows(), F.functions()) if r["mint"] in scored}
+    assert set(derived) == set(scored)
+    for m, t in scored.items():
+        assert (t["day"], t["fn"], t["y"]) == (derived[m][0], derived[m][1], derived[m][4]) and t["p"] == pytest.approx(derived[m][2])
+        assert t["running"] == pytest.approx(derived[m][3]), m
+
+
 def test_the_haircut_is_seeded_then_measured_and_every_honest_figure_is_printed_beside_it(journal):
     rs = [row(f"m{i}", 1, net=0.05) for i in range(MK.HAIRCUT_MIN_N)]
     h = MK.haircut(rs)
@@ -191,7 +223,7 @@ def test_the_haircut_is_seeded_then_measured_and_every_honest_figure_is_printed_
 
 def test_the_training_export_carries_open_forecasts(journal, tmp_path):
     F.add([{**BIN, "p": 0.3, "m": {"pop": "base", "stat": "count", **WEEK}, "op": ">=", "x": 2}])
-    calibration_ledger.training(F.fold()[1])
+    calibration_ledger.training(F.fold()[1], [])
     (line,) = open(tmp_path / "out" / "foresight-training.jsonl", encoding="utf-8")
     assert json.loads(line)["resolved"] is None and json.loads(line)["kind_of"] == "market" and json.loads(line)["missed"] is None
 

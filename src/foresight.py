@@ -14,6 +14,9 @@ Four events, one JSON line each, append-only in journal/foresight/<utc-day>.json
   given    names, for a FLOW or RUN forecast already in the journal without one, the market forecast it stands on.
   function a per-signal forecaster: P(net_honest > 0) for every measurable reclaim from its `from` day, as a logistic
            on the entry-observable flags. Fixed here before that day; scored by Brier against the BASE running rate.
+  trade    every measurable honest fill from TRADES_FROM, written by the machine once its UTC day is over: the
+           function in force, its P at entry, the BASE running rate beside it, what happened. Each trade is training
+           data (operator, 2026-10-06); its full record joins it in out/foresight-training.jsonl.
 
 Three kinds of forecast, by what they measure: MARKET (pop all | base), SELECTION (pop flow | run), FILL (a fill
 field). A SELECTION forecast names the MARKET forecast it is conditional on (`given`; the pen refuses one without
@@ -34,6 +37,7 @@ MODE = "foresight"
 CAUSES = ("instrument", "model", "regime", "calibration", "variance")
 C_MIN, C_MAX = 0.02, 0.98               # no belief becomes unfalsifiable
 Z80 = 2.563                             # an 80 % interval is 2.563 sigma wide
+TRADES_FROM = "2026-10-05"              # operator, 2026-10-06: every trade from yesterday on is training data here
 OPS = {"<": lambda v, x: v < x, "<=": lambda v, x: v <= x, ">": lambda v, x: v > x, ">=": lambda v, x: v >= x}
 POPS = {"all": lambda r: True, "base": lambda r: bool(r.get("standard_path")),
         "flow": lambda r: bool(r.get("standard_path") and r.get("flow")),
@@ -175,13 +179,13 @@ def functions(events=None):
     return [ev for ev in (J.read(MODE) if events is None else events) if ev["e"] == "function"]
 
 
-def per_signal(rs, fns):
-    """[(day, function id, p, running rate, won)] for every measurable honest fill a function was in force for.
+def in_force(rs, fns):
+    """(row, day, function, p, running rate, won) for every measurable honest fill a function was in force for.
 
     In force = the last function whose `from` is on or before the entry day. The reference is the BASE running rate:
     the share of winners among every measurable honest fill before this one, which needs no model at all.
     """
-    out, won, n = [], 0, 0
+    won, n = 0, 0
     for r in rs:
         if not POPS["base"](r) or r.get("net_honest") is None:
             continue
@@ -189,19 +193,47 @@ def per_signal(rs, fns):
         fn = next((f for f in reversed(fns) if f["from"] <= day), None)
         if fn and n:
             z = fn["spec"]["b"] + sum(w for k, w in fn["spec"]["w"].items() if r["flags"].get(k))
-            out.append((day, fn["id"], 1 / (1 + math.exp(-z)), won / n, y))
+            yield r, day, fn, 1 / (1 + math.exp(-z)), won / n, y
         won, n = won + y, n + 1
-    return out
+
+
+def per_signal(rs, fns):
+    """[(day, function id, p, running rate, won)], in_force without the row."""
+    return [(day, fn["id"], p, run, y) for _r, day, fn, p, run, y in in_force(rs, fns)]
+
+
+def trades(events=None):
+    """The trades already scored in the journal, by mint."""
+    return {ev["mint"]: ev for ev in (J.read(MODE) if events is None else events) if ev["e"] == "trade"}
+
+
+def score_trades(today=None):
+    """Write every measurable honest fill from TRADES_FROM whose UTC day is over and is not yet in the journal.
+    Returns the events written."""
+    today = today or C.today()
+    past = J.read(MODE)
+    done = trades(past)
+    evs = [{"e": "trade", "mint": r["mint"], "day": day, "fn": fn["id"], "p": p, "running": run, "y": y, "brier": (p - y) ** 2}
+           for r, day, fn, p, run, y in in_force(rows(), functions(past)) if TRADES_FROM <= day < today and r["mint"] not in done]
+    return add(evs) if evs else []
 
 
 def mix(c, t):
     return c * t["p_true"] + (1 - c) * t["p_false"]
 
 
-def check(ev, beliefs, preds, today):
-    """Refuse anything that could not have been a forecast: a window already open, a number without a reason."""
+def check(ev, beliefs, preds, today, events=()):
+    """Refuse anything that could not have been a forecast: a window already open, a number without a reason.
+    `events` is the journal before `ev`: a trade is checked against the functions and trades already in it."""
     e = ev["e"]
-    if e == "belief":
+    if e == "trade":
+        fns = [f for f in functions(events) if f["from"] <= ev["day"]]
+        need(fns and fns[-1]["id"] == ev["fn"], f"{ev['mint']}: scored by the function in force on {ev['day']}")
+        need(TRADES_FROM <= ev["day"] < today, f"{ev['mint']}: a trade is scored after its UTC day is over, from {TRADES_FROM}")
+        need(ev["mint"] not in trades(events), f"{ev['mint']} is already scored")
+        need(0 < ev["p"] < 1 and 0 <= ev["running"] <= 1 and isinstance(ev["y"], bool)
+             and abs(ev["brier"] - (ev["p"] - ev["y"]) ** 2) < 1e-12, f"{ev['mint']}: p, running, y and brier agree")
+    elif e == "belief":
         need(re.fullmatch(r"B\d+", ev["id"]) and C_MIN <= ev["c"] <= C_MAX, f"{ev['id']}: id B<n>, c inside [{C_MIN}, {C_MAX}]")
         text(ev, "because", *(() if ev["id"] in beliefs else ("claim",)))
     elif e == "lesson":
@@ -261,8 +293,12 @@ def add(events):
     """Validate every event against the journal as it stands, then append them all, or none. Returns the stamped events."""
     past, staged, today = J.read(MODE), [], C.today()
     for ev in events:
-        beliefs, preds, lessons = fold(past + staged)
         ev = dict(ev, at=C.stamp())
+        if ev["e"] == "trade":                                  # a trade's check reads no belief or forecast: no fold
+            check(ev, {}, {}, today, past + staged)
+            staged.append(ev)
+            continue
+        beliefs, preds, lessons = fold(past + staged)
         if ev["e"] == "predict":
             ev["id"] = f"F-{len(preds) + 1:04d}"
             if "test" in ev and ev["test"].get("belief") in beliefs:
@@ -272,7 +308,7 @@ def add(events):
             ev["id"] = f"L-{len(lessons) + 1:04d}"
         elif ev["e"] == "function":
             ev["id"] = f"P-{len(functions(past + staged)) + 1:04d}"
-        check(ev, beliefs, preds, today)
+        check(ev, beliefs, preds, today, past + staged)
         staged.append(ev)
     for ev in staged:
         J.append_line(MODE, today, ev)
