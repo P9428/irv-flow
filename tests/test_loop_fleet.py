@@ -10,7 +10,7 @@ OUTCOME_TOKENS = ("net_zero", "net_honest", "why_zero", "why_honest", "exit_zero
 def test_every_loop_step_exists():
     src = open(os.path.join(ROOT, "ops", "loop.py"), encoding="utf-8").read()
     steps = re.findall(r'\("([a-z_]+\.py)", "', src)
-    assert len(steps) == 10
+    assert len(steps) == 11
     for s in steps:
         assert os.path.isfile(os.path.join(ROOT, "ops", s)), s
 

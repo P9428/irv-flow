@@ -29,6 +29,7 @@ IF-01 and IF-02 are never pooled.
 `ops/score.py` capture scorer · `ops/readout.py` · `ops/freeze.py` the pin (IF-02 on) ·
 `ops/decide.py` one decision ruled through RI (ri_core) → `docs/decisions/` + `journal/decisions/` (operator ruling 2026-10-03: decisions go through RI) · `ops/freshness.py` · `ops/loop.py` ·
 `src/foresight.py` beliefs, forecasts, resolution, where a miss is laid · `ops/predict.py` its pen · `ops/calibration_ledger.py` its scorer ·
+`ops/learn.py` + `src/challenger.py` IF-L01: every trade a training row (`journal/train/`), one challenger frozen a day (`journal/learn/`), scored forward only (`out/learn.txt`; `docs/contracts/IF-L01-learning-loop.md`) ·
 `src/market.py` market state, the day's winners and losers, the haircut · `src/excursion.py` excursion and the 1 s / 2 s fill
 (`journal/after/`, written by the hunter only once `docs/loop/hunt-excursion.patch` is applied on the operator's word) ·
 `ops/digest.py` the operator's day/week/month page → `docs/digest.html` → artifact (`.claude/commands/digest.md`) ·

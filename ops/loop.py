@@ -31,6 +31,7 @@ STEPS = (
     ("daily_monitor.py", "is the rule firing (reads no outcome)", False),
     ("score.py", "write the forward-capture journal", False),
     ("readout.py", "what did it produce (non-actionable off-boundary)", False),
+    ("learn.py", "learn from every trade (IF-L01: table, today's challenger, forward shadow)", False),
     ("calibration_ledger.py", "are my forecasts any good (resolves closed windows)", False),
     ("suite.py", "can this box still verify itself", False),
     ("digest.py", "what the operator reads (docs/digest.html)", False),
