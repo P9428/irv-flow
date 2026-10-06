@@ -6,6 +6,7 @@
   kept(rs)       the share of target exits FLOW and RUN kept, and the single filter that turned away the most winners
   excursion(rs)  how far price ran for and against the honest entry, before the exit and after it (x, src/excursion.py)
   haircut(rs)    ONE standing number for the gap between the honest arm and a real taker: latency + own impact
+  economic_bar(h) the honest mean a signal must clear to break even once the haircut is paid (operator, 2026-10-06)
 
 The haircut is seeded and then measured. Own impact: −6.2509 % median per round trip at 1.00 SOL at create depth
 (~/mimicry out/mi86-create-own-impact.txt, RESULTS §82), read 2026-10-03. Latency: −3.7 pp, the figure IF-01 §8 cites
@@ -90,6 +91,14 @@ def haircut(rs):
     measured = len(lag) >= HAIRCUT_MIN_N
     latency = st.mean(lag) if measured else SEED["latency"]
     return {"latency": latency, "impact": SEED["impact"], "total": latency + SEED["impact"], "n": len(lag), "measured": measured}
+
+
+def economic_bar(h):
+    """BAR re-derived from operator economics, ruled 2026-10-06 (docs/decisions/2026-10-06-economic-bar.md): break-even
+    after the haircut, with no fixed cost because a paid feed is vetoed on funds. It replaces M-MI-11's +1.0370 %, which
+    is the struck $30M target's growth rate over signal density, in every live-capital prereg. IF-01 and IF-02 keep
+    their frozen BAR (IF-02 look 1 was taken under it); this is printed beside their looks and read by none."""
+    return -h["total"]
 
 
 def haircut_text(h):

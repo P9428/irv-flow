@@ -97,6 +97,13 @@ def look(L, hf, name="FLOW", path=LOOKS_PATH):
     C.write_json(path, taken)
 
 
+def economic(L, hf, bar, name="FLOW"):
+    """The economic bar beside the frozen one: how far the honest mean sits from break-even. No look reads it."""
+    if hf:
+        L.append(f"ECONOMIC BAR {bar * 100:+.2f} % (break-even after the haircut, ruled 2026-10-06; reads no look): "
+                 f"honest {name} mean {hf['mean'] * 100:+.3f} %, distance {(hf['mean'] - bar) * 100:+.3f} pp")
+
+
 def if02(L, cut=0.0):
     """IF-02, the run band alone, forward of its own freeze. No pin, no score."""
     t0 = C.frozen_at("IF-02")
@@ -114,6 +121,7 @@ def if02(L, cut=0.0):
     hr = honest(L, "honest arm (fill at next print)", run, cut)
     honest(L, "BASE since the freeze, honest arm (control, never taken)", base, cut)
     look(L, hr, "RUN", os.path.join(C.OUT, "looks-IF-02.json"))
+    economic(L, hr, -cut, "RUN")
 
 
 def main():
@@ -148,6 +156,7 @@ def main():
     L += [f"  {k:12s} {sum(1 for r in base if r['flags'].get(k)) / max(1, len(base)) * 100:5.1f} %" for k in R.FILTERS]
     L.append("")
     look(L, hf)
+    economic(L, hf, MK.economic_bar(h))
     if02(L, h["total"])
     diagnostics(L, F.rows())
     L += ["", C.FOOTER]

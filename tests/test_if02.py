@@ -61,3 +61,19 @@ def test_prereg_declares_the_rule_the_code_scores():
     assert f"`BAR` = {C.BAR * 100:+.4f} %" in text
     for _k, n, z in C.LOOKS:
         assert f"| {n:,} | {z:.3f} |" in text
+
+
+def test_the_economic_bar_is_break_even_after_the_haircut_and_moves_no_look(monkeypatch, tmp_path):
+    import market as MK
+    t = T0.timestamp()
+    monkeypatch.setattr(C, "frozen_at", lambda contract: T0)
+    monkeypatch.setattr(C, "OUT", str(tmp_path))
+    monkeypatch.setattr(F, "rows", lambda: [row("in", t + 1)])
+    h = {"latency": -0.0072, "impact": -0.062509, "total": -0.069709}
+    L = []
+    readout.if02(L, h["total"])
+    text = "\n".join(L)
+    assert MK.economic_bar(h) == 0.069709 and C.BAR == 0.010370
+    assert f"distance to bar {(-0.08 - C.BAR) * 100:+.3f} pp" in text
+    assert "ECONOMIC BAR +6.97 % (break-even after the haircut, ruled 2026-10-06; reads no look): honest RUN mean -8.000 %, distance -14.971 pp" in text
+    assert not os.listdir(tmp_path)

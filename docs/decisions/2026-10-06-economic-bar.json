@@ -1,0 +1,68 @@
+{
+ "as_of": "2026-10-06",
+ "slug": "economic-bar",
+ "decision": "The owed ruling: re-derive BAR from operator economics before look 1, or confirm the inherited +1.0370 %. IF-02's look 1 was taken at 2026-10-06T10:20Z under the inherited bar. Amend IF-01's BAR to the economic figure, or keep both frozen bars and carry the economic bar beside every look and into any live-capital prereg?",
+ "asked_by": "the operator, 2026-10-06: 're-derive BAR from operator economics', then 'B' on the two ways to land it",
+ "looked": [
+  "prereg/IF-01-PREREGISTRATION.md section 5 (the operator may re-derive BAR by amendment before look 1, never after), section 7 S1, AMENDMENT 1 (paper size 1 SOL; own impact about -6.25 % a round trip at that size is NOT in the mark)",
+  "prereg/IF-02-PREREGISTRATION.md section 5: BAR is IF-01's, and the ruling on re-deriving it binds both contracts and must land before either look 1",
+  "out/looks-IF-02.json: look 1 taken 2026-10-06T10:20:05Z, n 322, honest RUN mean -2.276 %, z_obs -1.794, CONTINUE, against +1.0370 %",
+  "~/mimicry docs/loop/rules.md AMENDMENT 2 (2026-08-21): +1.0370 % is 0.319393 x 1.0 SOL / (616 x 0.05), the daily growth for 1 SOL to $30M in 43 days, and that target is struck by the operator's cash-machine ruling",
+  "~/mimicry docs/loop/divergence.md AMENDMENT 4: the BAR row carries a $200/SOL assumption and a linear-deployment model; no cost of trading enters it",
+  "src/market.py haircut: own impact -6.2509 % at 1.00 SOL (mimicry RESULTS section 82) plus latency measured on 1,121 2 s fills, -0.72 pp; total -6.97 pp at this readout",
+  "docs/decisions/2026-10-05-hunter-free-tier.md: a paid feed is vetoed on funds, so the hunter's fixed cost is zero",
+  "python ops/readout.py 2026-10-06: honest FLOW n 16 mean -11.918 %; honest RUN n 332 mean -2.278 %",
+  "NOT looked: network and priority fees per transaction on a real order (no order exists, rule 1); a profit floor above break-even (the operator's to name); own impact at a size other than 1 SOL on the reclaim's own entries"
+ ],
+ "who_profits": "Claude first: Claude proposed B and wrote the readout line that carries it, so the ruling ships Claude's code and Claude's framing; Claude also wrote this morning's MR-01 move that sent the operator here after IF-02's look 1 had already fired, and B is the option that does not expose that miss by forcing an amendment. The check is that A is laid out with its numbers and its only veto is IF-02's own frozen text, which Claude did not write. The operator: wants a bar that means money; a pass against +1.0370 % would read as a win while losing about 6 pp a trade. Nobody else: zero capital, no counterparty.",
+ "claims": [
+  {"id": "F01", "layer": "L0", "label": "FACT", "text": "The inherited +1.0370 % is the struck $30M target's daily growth over signal density; no trading cost is in it",
+   "src": [["disk", "alive", "~/mimicry docs/loop/rules.md AMENDMENT 2", "0.319393 x 1.0 / (616 x 0.05)"], ["arith", "alive", "0.319393 / 30.8 = 0.010370", ""]]},
+  {"id": "F02", "layer": "L0", "label": "FACT", "text": "The honest arm leaves out own impact (-6.25 pp at 1 SOL) and latency past the next print (-0.72 pp measured on 1,121 2 s fills); a paid feed is vetoed on funds, so fixed cost is zero. Break-even honest mean is +6.97 %",
+   "src": [["disk", "alive", "src/market.py haircut; out/readout.txt 2026-10-06", ""], ["disk", "alive", "docs/decisions/2026-10-05-hunter-free-tier.md option E", ""], ["arith", "alive", "6.2509 + 0.72 = 6.97", ""]]},
+  {"id": "F03", "layer": "L0", "label": "FACT", "text": "IF-02 look 1 was taken at 2026-10-06T10:20Z against +1.0370 %; IF-02 section 5 requires the bar ruling before either look 1",
+   "src": [["disk", "alive", "out/looks-IF-02.json; prereg/IF-02-PREREGISTRATION.md section 5", ""]]},
+  {"id": "F04", "layer": "L0", "label": "FACT", "text": "IF-01 FLOW has 16 honest fills of 300 for look 1; its own section 5 still allows an amendment",
+   "src": [["disk", "alive", "python ops/readout.py 2026-10-06", ""]]},
+  {"id": "F05", "layer": "L0", "label": "FACT", "text": "The operator ruled re-derive, then B",
+   "src": [["operator", "alive", "2026-10-06: 're-derive BAR from operator economics'; 'B'", ""]]},
+  {"id": "I01", "layer": "L2", "label": "INFERENCE", "text": "A pass against +1.0370 % on the honest arm would still lose about 6 pp a trade at 1 SOL; the frozen bar measures a dead target, not money",
+   "src": [["join", "alive", "F01, F02", ""]]},
+  {"id": "I02", "layer": "L2", "label": "INFERENCE", "text": "Amending IF-01 alone breaks IF-02's frozen text, which ties both contracts to one bar ruling landed before either look 1",
+   "src": [["join", "alive", "F03, F04", ""]]},
+  {"id": "U01", "layer": "L0", "label": "UNKNOWN", "text": "Per-transaction network and priority fees on a real order; the operator's profit floor above break-even", "src": []}
+ ],
+ "options": [
+  {"id": "A-amend-IF-01", "do": "Write IF-01 AMENDMENT 2 setting BAR to break-even after the haircut (+6.97 % today) and re-pin; IF-02 keeps +1.0370 %",
+   "label": "INFERENCE", "basis": "F02, F04",
+   "fails_if": "IF-02's section 5 is read as binding IF-01 too, so the amendment lands after the deadline the contracts set together; and the two sibling contracts then judge the same reclaim against bars 6.7x apart",
+   "survivable": true, "reversible": false, "competence": "inside",
+   "veto": "rule 2 and IF-02 section 5: the bar ruling had to land before either look 1, and IF-02's look 1 fired at 10:20Z",
+   "system_effect": "a frozen deadline is passed by reading one contract's text over its sibling's"},
+  {"id": "B-economic-bar-beside", "do": "Keep both frozen BARs. Print the economic bar (break-even after the measured haircut, +6.97 % today) beside every IF-01 and IF-02 look, read by none; every live-capital prereg inherits it in place of +1.0370 %",
+   "label": "INFERENCE", "basis": "I01, I02, F05",
+   "fails_if": "a reader takes a frozen-bar PASS as money without reading the line under it; or the haircut's own impact figure (one measurement at create depth) is wrong for the reclaim's entries and the economic bar with it",
+   "survivable": true, "reversible": true, "competence": "inside",
+   "system_effect": "no frozen parameter moves after a look; the readout states the gap between the contract's bar and money on every reading"},
+  {"id": "C-confirm-inherited", "do": "Confirm +1.0370 % and close the box",
+   "label": "FACT", "basis": "F01",
+   "fails_if": "the bar keeps measuring a struck target and a pass reads as money while losing about 6 pp a trade",
+   "survivable": true, "reversible": true, "competence": "inside",
+   "veto": "F05: the operator ruled re-derive",
+   "system_effect": "a dead target's number is ratified as the program's money test"}
+ ],
+ "split": {
+  "reversible_now": "the readout line and src/market.py economic_bar: both revert with a commit and read no look",
+  "irreversible_gated": "none on this contract; the economic bar becomes binding only in a future live-capital prereg, which is its own ruling"
+ },
+ "recommendation": {
+  "id": "R01", "option": "B-economic-bar-beside", "label": "INFERENCE",
+  "text": "RULED: keep IF-01's and IF-02's frozen +1.0370 %; carry the economic bar, break-even after the measured haircut (+6.97 % today, no fixed cost), beside every look and into every live-capital prereg. A amends after IF-02's look 1 against both contracts' joint deadline; C ratifies the struck $30M target and the operator ruled re-derive.",
+  "src": [["ruling", "alive", "F01, F02, F03, F05, I01, I02", "A vetoed on the joint deadline; C vetoed on the operator's word"]]
+ },
+ "gates": [
+  {"name": "suite-green", "op": "ge", "field": "tests_passed", "bar": 49, "measured": 49, "from": "python -m pytest, 2026-10-06, after the economic-bar change"},
+  {"name": "known-answer-0828", "op": "ge", "field": "gate_0828_green", "bar": 1, "measured": 1, "from": "tests/test_known_answer_0828.py in that run"},
+  {"name": "operator-ruled", "op": "ge", "field": "operator_ruled_B", "bar": 1, "measured": 1, "from": "the operator, 2026-10-06: 'B'"}
+ ]
+}
