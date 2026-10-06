@@ -16,7 +16,8 @@ Four events, one JSON line each, append-only in journal/foresight/<utc-day>.json
            on the entry-observable flags. Fixed here before that day; scored by Brier against the BASE running rate.
   trade    every measurable honest fill from TRADES_FROM, written by the machine once its UTC day is over: the
            function in force, its P at entry, the BASE running rate beside it, what happened. Each trade is training
-           data (operator, 2026-10-06); its full record joins it in out/foresight-training.jsonl.
+           data (operator, 2026-10-06); its full record joins it in out/foresight-training.jsonl. From 2026-10-06 it
+           also carries when it was entered (`when`): UTC and Central time, the UTC weekday, and the trading session.
 
 Three kinds of forecast, by what they measure: MARKET (pop all | base), SELECTION (pop flow | run), FILL (a fill
 field). A SELECTION forecast names the MARKET forecast it is conditional on (`given`; the pen refuses one without
@@ -28,7 +29,8 @@ never moves a frozen parameter: it is debt the next prereg pays.
 import math
 import re
 import statistics as st
-from datetime import date
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 import common as C
 import journal as J
@@ -38,6 +40,10 @@ CAUSES = ("instrument", "model", "regime", "calibration", "variance")
 C_MIN, C_MAX = 0.02, 0.98               # no belief becomes unfalsifiable
 Z80 = 2.563                             # an 80 % interval is 2.563 sigma wide
 TRADES_FROM = "2026-10-05"              # operator, 2026-10-06: every trade from yesterday on is training data here
+CT = ZoneInfo("America/Chicago")
+# The trading session by UTC hour of entry, fixed in UTC all year (no daylight saving shift); operator, 2026-10-06.
+SESSIONS = ((0, 7, "Asia"), (7, 13, "Europe"), (13, 16, "Europe/US overlap"), (16, 21, "US"), (21, 24, "US late"))
+WHEN = ("entry_utc", "entry_ct", "weekday", "session")
 OPS = {"<": lambda v, x: v < x, "<=": lambda v, x: v <= x, ">": lambda v, x: v > x, ">=": lambda v, x: v >= x}
 POPS = {"all": lambda r: True, "base": lambda r: bool(r.get("standard_path")),
         "flow": lambda r: bool(r.get("standard_path") and r.get("flow")),
@@ -202,6 +208,13 @@ def per_signal(rs, fns):
     return [(day, fn["id"], p, run, y) for _r, day, fn, p, run, y in in_force(rs, fns)]
 
 
+def when(unix):
+    """When a trade was entered: UTC time, Central time, the UTC weekday and the session (SESSIONS)."""
+    t = datetime.fromtimestamp(unix, timezone.utc)
+    return {"entry_utc": t.isoformat(timespec="seconds"), "entry_ct": t.astimezone(CT).strftime("%Y-%m-%d %H:%M:%S %Z"),
+            "weekday": t.strftime("%A"), "session": next(name for lo, hi, name in SESSIONS if lo <= t.hour < hi)}
+
+
 def trades(events=None):
     """The trades already scored in the journal, by mint."""
     return {ev["mint"]: ev for ev in (J.read(MODE) if events is None else events) if ev["e"] == "trade"}
@@ -213,7 +226,8 @@ def score_trades(today=None):
     today = today or C.today()
     past = J.read(MODE)
     done = trades(past)
-    evs = [{"e": "trade", "mint": r["mint"], "day": day, "fn": fn["id"], "p": p, "running": run, "y": y, "brier": (p - y) ** 2}
+    evs = [{"e": "trade", "mint": r["mint"], "day": day, "fn": fn["id"], "p": p, "running": run, "y": y, "brier": (p - y) ** 2,
+            **when(entry(r))}
            for r, day, fn, p, run, y in in_force(rows(), functions(past)) if TRADES_FROM <= day < today and r["mint"] not in done]
     return add(evs) if evs else []
 
@@ -233,6 +247,10 @@ def check(ev, beliefs, preds, today, events=()):
         need(ev["mint"] not in trades(events), f"{ev['mint']} is already scored")
         need(0 < ev["p"] < 1 and 0 <= ev["running"] <= 1 and isinstance(ev["y"], bool)
              and abs(ev["brier"] - (ev["p"] - ev["y"]) ** 2) < 1e-12, f"{ev['mint']}: p, running, y and brier agree")
+        if any(k in ev for k in WHEN):                         # every trade written from 2026-10-06 carries them
+            utc = datetime.fromisoformat(ev["entry_utc"]).timestamp()
+            need(ev["entry_utc"][:10] == ev["day"] and {k: ev.get(k) for k in WHEN} == when(utc),
+                 f"{ev['mint']}: entry time, weekday and session agree with each other and the day")
     elif e == "belief":
         need(re.fullmatch(r"B\d+", ev["id"]) and C_MIN <= ev["c"] <= C_MAX, f"{ev['id']}: id B<n>, c inside [{C_MIN}, {C_MAX}]")
         text(ev, "because", *(() if ev["id"] in beliefs else ("claim",)))

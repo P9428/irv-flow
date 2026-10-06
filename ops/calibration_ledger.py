@@ -47,7 +47,8 @@ def score_lines(done):
 
 def training(preds, rs):
     """Every forecast, one line each. An open one carries `resolved` null: the file was empty until the first window closed.
-    Then every scored trade: the function's P at entry, its rival, what happened, and the trade's full live record
+    Then every scored trade: the function's P at entry, its rival, what happened, when it was entered (UTC and Central
+    time, weekday, session), and the trade's full live record
     (flags, features, both arms' outcomes, the fill, the excursion), null where the record is gone."""
     path = os.path.join(C.OUT, "foresight-training.jsonl")
     os.makedirs(C.OUT, exist_ok=True)
@@ -65,6 +66,7 @@ def training(preds, rs):
             rec = by.get(t["mint"])
             fh.write(json.dumps({"id": f"trade/{t['mint']}", "kind_of": "trade", "at": t["at"], "day": t["day"], "fn": t["fn"],
                                  "p": t["p"], "rivals": {"running": t["running"]}, "y": t["y"], "brier": t["brier"],
+                                 **(F.when(F.entry(rec)) if rec else {k: t.get(k) for k in F.WHEN}),
                                  "record": {k: v for k, v in rec.items() if k != "mint"} if rec else None}, sort_keys=True) + "\n")
 
 
@@ -82,6 +84,24 @@ def signal_lines(rs):
         v = [x for x in ps if d in ("all", x[0])]
         L.append(f"  {d:10s} n {len(v):5d}  Brier function {brier(v, 2):.4f}  running rate {brier(v, 3):.4f}  skill {1 - brier(v, 2) / brier(v, 3):+.3f}")
     return L + ["  skill > 0: the function beats quoting the BASE win rate so far. A score on the function, never a verdict."]
+
+
+def when_lines(rs):
+    """The journal's trades by session and by UTC weekday: count, win rate, honest mean, and the function's Brier
+    beside the running rate's. A reading of the record, never a filter: no rule, look or bar reads it."""
+    by = {r["mint"]: r for r in rs}
+    ts = [(t, by[t["mint"]], F.when(F.entry(by[t["mint"]]))) for t in F.trades().values() if t["mint"] in by]
+    L = ["", "TRADES BY SESSION AND WEEKDAY (UTC; sessions: " + ", ".join(f"{n} {lo:02d}-{hi:02d}" for lo, hi, n in F.SESSIONS) + ")"]
+    if not ts:
+        return L + ["  no trade in the journal yet"]
+    for key, order in (("session", [n for _, _, n in F.SESSIONS]), ("weekday", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])):
+        for name in order:
+            v = [(t, r) for t, r, w in ts if w[key] == name]
+            if v:
+                L.append(f"  {name:18s} n {len(v):5d}  win {sum(t['y'] for t, _ in v) / len(v) * 100:5.1f} %  "
+                         f"honest mean {st.mean(r['net_honest'] for _, r in v) * 100:+7.2f} %  "
+                         f"Brier function {st.mean(t['brier'] for t, _ in v):.4f}  running {st.mean((t['running'] - t['y']) ** 2 for t, _ in v):.4f}")
+    return L
 
 
 def market_lines(rs):
@@ -117,7 +137,7 @@ def main():
     L += [f"  {p['id']} {p['who']:8s} {said(p)} -> {got(p)}   {p['q'][:110]}" for p in done if p not in misses]
     L += signal_lines(rs) + [f"  TRADES IN THE JOURNAL: {len(F.trades())} scored from {F.TRADES_FROM}, {len(wrote)} written this run; "
                              "each is a line of out/foresight-training.jsonl with its full record"]
-    L += market_lines(rs) + ["", "HAIRCUT — " + MK.haircut_text(MK.haircut(rs))]
+    L += when_lines(rs) + market_lines(rs) + ["", "HAIRCUT — " + MK.haircut_text(MK.haircut(rs))]
     L += ["", "MODEL — credence now (at first statement), and the open forecast that can move it"]
     for b in beliefs.values():
         test = next((p["id"] for p in preds.values() if p["res"] is None and p.get("test", {}).get("belief") == b["id"]), None)

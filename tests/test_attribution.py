@@ -179,6 +179,10 @@ def test_every_trade_from_trades_from_enters_the_journal_once_its_day_is_over_wi
     wrote = F.score_trades("2999-01-03")
     assert [(t["mint"], t["day"], t["fn"], t["y"]) for t in wrote] == [("b", "2999-01-02", "P-0001", False), ("c", "2999-01-02", "P-0001", True)]
     assert wrote[0]["p"] == pytest.approx(1 / (1 + math.exp(-1))) and wrote[0]["running"] == 1.0 and wrote[1]["running"] == 0.5
+    assert {k: wrote[0][k] for k in F.WHEN} == {"entry_utc": "2999-01-02T00:01:00+00:00", "entry_ct": "2999-01-01 18:01:00 CST",
+                                                "weekday": "Wednesday", "session": "Asia"}
+    with pytest.raises(ValueError):
+        F.add([dict(wrote[0], mint="y", session="US")])                          # the session must be the entry hour's
     assert F.score_trades("2999-01-03") == []                                    # once; day 3 is not over
     with pytest.raises(ValueError):
         F.add([dict(wrote[0], at=None)])                                         # a trade is scored once
@@ -192,16 +196,26 @@ def test_every_trade_from_trades_from_enters_the_journal_once_its_day_is_over_wi
         rows = [json.loads(line) for line in fh]
     assert [r["id"] for r in rows] == ["trade/b", "trade/c", "trade/d"]
     assert rows[1]["record"]["net_honest"] == 0.5 and rows[1]["record"]["flags"]["pace"] is False and rows[1]["rivals"] == {"running": 0.5}
+    assert all(r["weekday"] and r["session"] and r["entry_ct"] for r in rows)
+
+
+@pytest.mark.parametrize("hour, session", [(0, "Asia"), (6, "Asia"), (7, "Europe"), (13, "Europe/US overlap"), (16, "US"), (21, "US late"), (23, "US late")])
+def test_every_utc_hour_falls_in_exactly_one_session(hour, session):
+    assert F.when(datetime(2026, 10, 5, hour, 30, tzinfo=timezone.utc).timestamp())["session"] == session
+    assert [h for lo, hi, _ in F.SESSIONS for h in range(lo, hi)] == list(range(24))
 
 
 def test_every_trade_in_the_journal_on_disk_re_derives_from_the_live_journal():
     """The journal's trades are the function's own reading of the hunter's record: p, rival and outcome, mint for mint."""
     scored = F.trades()
-    derived = {r["mint"]: (day, fn["id"], p, run, y) for r, day, fn, p, run, y in F.in_force(F.rows(), F.functions()) if r["mint"] in scored}
+    rows = {r["mint"]: r for r in F.rows()}
+    derived = {r["mint"]: (day, fn["id"], p, run, y) for r, day, fn, p, run, y in F.in_force(list(rows.values()), F.functions()) if r["mint"] in scored}
     assert set(derived) == set(scored)
     for m, t in scored.items():
         assert (t["day"], t["fn"], t["y"]) == (derived[m][0], derived[m][1], derived[m][4]) and t["p"] == pytest.approx(derived[m][2])
         assert t["running"] == pytest.approx(derived[m][3]), m
+        if any(k in t for k in F.WHEN):
+            assert {k: t[k] for k in F.WHEN} == F.when(F.entry(rows[m])), m
 
 
 def test_the_haircut_is_seeded_then_measured_and_every_honest_figure_is_printed_beside_it(journal):
