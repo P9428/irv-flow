@@ -41,4 +41,5 @@ def test_loop_status_if_present_has_every_step():
     p = os.path.join(ROOT, "monitor", "loop-status.json")
     if os.path.exists(p):
         st = json.load(open(p, encoding="utf-8"))
-        assert len(st["steps"]) == 10
+        src = open(os.path.join(ROOT, "ops", "loop.py"), encoding="utf-8").read()
+        assert sorted(st["steps"]) == sorted(re.findall(r'\("([a-z_]+\.py)", "', src))
