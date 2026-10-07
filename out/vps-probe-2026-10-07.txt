@@ -1,0 +1,10 @@
+VPS probe 2026-10-07T14:34:28Z, read-only, ssh root@66.135.15.102
+ 14:34:30 up 52 days, 21:55,  1 user,  load average: 0.10, 0.20, 0.18
+/dev/vda2        52G   20G   30G  41% /
+Mem:            1962        1722         104           0         323         239
+1
+Python 3.12.3
+ModuleNotFoundError: No module named 'websockets'
+ls: cannot access '/opt/irv-flow': No such file or directory
+inactive inactive 
+rpc getSlot http 200 0.085352s

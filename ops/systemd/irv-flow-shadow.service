@@ -1,0 +1,19 @@
+# The VPS shadow hunter (ruled through RI 2026-10-07, docs/decisions/2026-10-07-vps-shadow-hunter.md): the same
+# ops/hunt.py on the same keyless feed, from the VPS's own IP. It writes only under /opt/irv-flow and counts toward
+# nothing: no look, readout or ledger reads it. Making it primary is its own ruling at A-0001.
+[Unit]
+Description=irv-flow shadow hunter (keyless pump.fun websocket, paper only, counts toward nothing)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/irv-flow
+ExecStart=/opt/irv-flow/venv/bin/python /opt/irv-flow/ops/hunt.py
+Restart=always
+RestartSec=3
+MemoryMax=400M
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
