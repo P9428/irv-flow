@@ -1,6 +1,6 @@
 # RULINGS OWED — open boxes are counted by ops/constraint_scan.py stage 5 DECIDE
 
-- [ ] Paid RPC / Geyser feed for the hunter: the public websocket dropped 3× in the first 6 minutes; each drop loses prints mid-window.
+- [x] Paid RPC / Geyser feed for the hunter: the public websocket dropped 3× in the first 6 minutes; each drop loses prints mid-window. RULED 2026-10-05 through RI (`docs/decisions/2026-10-05-hunter-free-tier.md`): option E, a paid feed, VETOED (F05: no funds; rule 2, the prereg names the public RPC); the free tier is kept on two streams with every blind span journalled. Box closed 2026-10-07.
 - [ ] Deploy ops/systemd/irv-flow-hunt.service on the VPS as a second witness (VPS disk is at its floor; the hunter writes only signal lines).
 - [x] Rule on the IF-02 draft: RULED freeze as drafted, through RI (`docs/decisions/2026-10-03-if02-freeze.md`); pinned 2026-10-03.
 - [x] Re-derive BAR from operator economics before look 1, or confirm the inherited +1.0370 %. RULED 2026-10-06 through RI (`docs/decisions/2026-10-06-economic-bar.md`): re-derived as break-even after the measured haircut (+6.97 % on the honest arm at 1 SOL, no fixed cost), printed beside every look as ECONOMIC BAR and inherited by every live-capital prereg. Both frozen bars stay at +1.0370 %: IF-02's look 1 fired at 10:20Z, past the joint deadline in IF-02 section 5.

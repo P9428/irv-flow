@@ -35,7 +35,7 @@ import rule as R              # noqa: E402
 
 WS_URL = os.environ.get("IRV_FLOW_WS", "wss://api.mainnet-beta.solana.com")
 PUMP = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
-STREAMS = 2
+STREAMS = int(os.environ.get("IRV_FLOW_STREAMS", "2"))  # the public RPC meters usage per IP: every stream draws on the same budget
 GRACE_S = 120                       # a mint is kept this long past its lookback so late exits settle
 MAX_PRINTS = 6000                   # more prints than this inside 900 s is a bot swarm; tracking stops
 SEEN_SIGNATURES = 200_000           # dedupe window across the two streams
@@ -110,6 +110,7 @@ class Hunter:
         self.seen_set = set()
         self.stats = {"creates": 0, "trades": 0, "signals": 0, "flow": 0, "closed": 0, "drops": 0,
                       "started": time.time(), "last_event": None, "connected": 0, "lag_s": 0.0}
+        self.blind = None                   # (since, why, refusals) while every stream that was up is down
         os.makedirs(C.MON, exist_ok=True)
 
     def log(self, msg):
@@ -245,22 +246,57 @@ class Hunter:
                 self.on_create(decode_create(raw))
         self.stats["last_event"] = time.time()
 
+    def went_blind(self, why):
+        self.blind = (time.time(), why, 0)
+
+    def saw_again(self):
+        """Both streams were down and one is back: the span is a gap, journalled, never backfilled (V4)."""
+        since, why, refused = self.blind
+        self.blind, now = None, time.time()
+        J.append_line("gaps", C.utc_day(since), {
+            "at": C.stamp(), "kind": "blind", "backfilled": False, "from": C.iso(since), "to": C.iso(now),
+            "seconds": round(now - since, 1), "refusals": refused, "why": why, "watching": len(self.mints),
+            "lost": "every print on every watched mint inside the span, and every create in it: those mints are never followed"})
+
+    @staticmethod
+    def budget(headers):
+        """The public RPC's per-IP meter, as it reports itself on every handshake (x-ratelimit-*)."""
+        h = {k.lower(): v for k, v in headers.raw_items()}
+        return " ".join(f"{k[12:]}={h[k]}" for k in ("x-ratelimit-endpoint-remaining", "x-ratelimit-pubsub-remaining",
+                                                       "x-ratelimit-conn-remaining") if k in h)
+
     async def stream(self, idx):
         sub = json.dumps({"jsonrpc": "2.0", "id": idx, "method": "logsSubscribe",
                           "params": [{"mentions": [PUMP]}, {"commitment": "processed"}]})
         while True:
+            up = False
             try:
                 async with websockets.connect(WS_URL, ping_interval=20, max_size=None, open_timeout=15) as ws:
                     await ws.send(sub)
+                    up = True
                     self.stats["connected"] += 1
-                    self.log(f"stream {idx} connected")
+                    if self.blind:
+                        self.saw_again()
+                    self.log(f"stream {idx} connected {self.budget(ws.response_headers)}")
                     async for msg in ws:
                         self.handle(msg)
             except Exception as e:                      # any drop: count, log, reconnect; the twin stream covers the gap
-                self.stats["connected"] = max(0, self.stats["connected"] - 1)
+                why = f"{type(e).__name__}: {str(e)[:80]}"
+                wait = 2
+                if isinstance(e.__cause__, websockets.ProtocolError):   # the server's close carried a code outside RFC 6455
+                    why += f" ({e.__cause__})"
+                if isinstance(e, websockets.InvalidStatusCode):         # 413: the IP's usage budget is overdrawn
+                    why += f" {self.budget(e.headers)}"
+                    wait = max(wait, int(e.headers.get("retry-after", "").strip() or 0))
                 self.stats["drops"] += 1
-                self.log(f"stream {idx} drop {type(e).__name__}: {str(e)[:80]}")
-                await asyncio.sleep(2)
+                if up:
+                    self.stats["connected"] -= 1
+                    if self.stats["connected"] == 0:
+                        self.went_blind(why)
+                elif self.blind:                        # the public RPC refuses reconnects (HTTP 413, retry-after 30) once the budget is overdrawn
+                    self.blind = (self.blind[0], self.blind[1], self.blind[2] + 1)
+                self.log(f"stream {idx} drop {why}")
+                await asyncio.sleep(wait)
 
     async def pulse(self):
         last_log = 0

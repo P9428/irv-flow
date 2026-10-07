@@ -20,6 +20,10 @@ def stamp():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def iso(unix):
+    return datetime.fromtimestamp(unix, timezone.utc).isoformat(timespec="seconds")
+
+
 def utc_day(unix):
     return datetime.fromtimestamp(unix, timezone.utc).strftime("%Y-%m-%d")
 
