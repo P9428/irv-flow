@@ -199,6 +199,27 @@ def test_every_trade_from_trades_from_enters_the_journal_once_its_day_is_over_wi
     assert all(r["weekday"] and r["session"] and r["entry_ct"] for r in rows)
 
 
+def test_a_late_witness_row_rebases_the_running_rate_forward_and_moves_nothing_else(journal, monkeypatch):
+    """Ruled through RI 2026-10-07: the record is the authority; a pinned trade is corrected by a rebase line, never edited."""
+    F.add([{"e": "function", "who": "agent", "from": "2999-01-02", "spec": {"b": 0.0, "w": {"pace": 1.0}}, **WHY}])
+    journal([row("a", 1, net=0.5), row("b", 2)])
+    monkeypatch.setattr(C, "today", lambda: "2999-01-03")
+    assert [(t["mint"], t["running"]) for t in F.score_trades()] == [("b", 1.0)]
+    late = dict(row("w", 1), t_entry_s=120)                                     # entered before b, delivered after b was scored
+    journal([late], mode="forward")
+    rb = F.score_trades()
+    assert [(e["e"], e["mint"], e["recorded"], e["now"]) for e in rb] == [("rebase", "b", 1.0, 0.5)]
+    t = F.trades()["b"]
+    assert t["running"] == 0.5 and (t["p"], t["y"], t["fn"]) == (pytest.approx(1 / (1 + math.exp(-1))), False, "P-0001")
+    assert F.score_trades() == []                                                # the record gives 0.5 now: once
+    with pytest.raises(ValueError):
+        F.add([dict(rb[0], recorded=0.9, now=0.4)])                              # recorded must be what the trade carries
+    with pytest.raises(ValueError):
+        F.add([dict(rb[0], mint="nobody")])                                      # a rebase goes on a scored trade
+    with pytest.raises(ValueError):
+        F.add([dict(rb[0], recorded=0.5, now=0.5)])                              # a rebase moves the rate
+
+
 @pytest.mark.parametrize("hour, session", [(0, "Asia"), (6, "Asia"), (7, "Europe"), (13, "Europe/US overlap"), (16, "US"), (21, "US late"), (23, "US late")])
 def test_every_utc_hour_falls_in_exactly_one_session(hour, session):
     assert F.when(datetime(2026, 10, 5, hour, 30, tzinfo=timezone.utc).timestamp())["session"] == session

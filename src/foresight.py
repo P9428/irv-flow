@@ -18,6 +18,10 @@ Four events, one JSON line each, append-only in journal/foresight/<utc-day>.json
            function in force, its P at entry, the BASE running rate beside it, what happened. Each trade is training
            data (operator, 2026-10-06); its full record joins it in out/foresight-training.jsonl. From 2026-10-06 it
            also carries when it was entered (`when`): UTC and Central time, the UTC weekday, and the trading session.
+  rebase   a trade's BASE running rate as the record now gives it, written by the machine when a row entered before the
+           trade reached the journal after it was scored (a late forward-capture witness): `recorded` is the rate the
+           trade carries, `now` the re-derived one. Only the reference moves; p, function and outcome never do
+           (ruled through RI 2026-10-07, docs/decisions/2026-10-07-running-rate-late-rows.md).
 
 Three kinds of forecast, by what they measure: MARKET (pop all | base), SELECTION (pop flow | run), FILL (a fill
 field). A SELECTION forecast names the MARKET forecast it is conditional on (`given`; the pen refuses one without
@@ -39,6 +43,7 @@ MODE = "foresight"
 CAUSES = ("instrument", "model", "regime", "calibration", "variance")
 C_MIN, C_MAX = 0.02, 0.98               # no belief becomes unfalsifiable
 Z80 = 2.563                             # an 80 % interval is 2.563 sigma wide
+REBASE_EPS = 1e-12                       # a running rate the record still gives, to float noise
 TRADES_FROM = "2026-10-05"              # operator, 2026-10-06: every trade from yesterday on is training data here
 CT = ZoneInfo("America/Chicago")
 # The trading session by UTC hour of entry, fixed in UTC all year (no daylight saving shift); operator, 2026-10-06.
@@ -216,19 +221,28 @@ def when(unix):
 
 
 def trades(events=None):
-    """The trades already scored in the journal, by mint."""
-    return {ev["mint"]: ev for ev in (J.read(MODE) if events is None else events) if ev["e"] == "trade"}
+    """The trades already scored in the journal, by mint, each carrying its latest rebased running rate."""
+    out = {}
+    for ev in J.read(MODE) if events is None else events:
+        if ev["e"] == "trade":
+            out[ev["mint"]] = ev
+        elif ev["e"] == "rebase":
+            out[ev["mint"]] = dict(out[ev["mint"]], running=ev["now"])
+    return out
 
 
 def score_trades(today=None):
-    """Write every measurable honest fill from TRADES_FROM whose UTC day is over and is not yet in the journal.
-    Returns the events written."""
+    """Write every measurable honest fill from TRADES_FROM whose UTC day is over and is not yet in the journal, then a
+    rebase for every scored trade whose running rate the record no longer gives. Returns the events written."""
     today = today or C.today()
     past = J.read(MODE)
     done = trades(past)
+    forced = list(in_force(rows(), functions(past)))
     evs = [{"e": "trade", "mint": r["mint"], "day": day, "fn": fn["id"], "p": p, "running": run, "y": y, "brier": (p - y) ** 2,
             **when(entry(r))}
-           for r, day, fn, p, run, y in in_force(rows(), functions(past)) if TRADES_FROM <= day < today and r["mint"] not in done]
+           for r, day, fn, p, run, y in forced if TRADES_FROM <= day < today and r["mint"] not in done]
+    evs += [{"e": "rebase", "mint": r["mint"], "recorded": done[r["mint"]]["running"], "now": run}
+            for r, _day, _fn, _p, run, _y in forced if r["mint"] in done and abs(done[r["mint"]]["running"] - run) > REBASE_EPS]
     return add(evs) if evs else []
 
 
@@ -251,6 +265,11 @@ def check(ev, beliefs, preds, today, events=()):
             utc = datetime.fromisoformat(ev["entry_utc"]).timestamp()
             need(ev["entry_utc"][:10] == ev["day"] and {k: ev.get(k) for k in WHEN} == when(utc),
                  f"{ev['mint']}: entry time, weekday and session agree with each other and the day")
+    elif e == "rebase":
+        t = trades(events).get(ev["mint"])
+        need(t is not None, f"{ev['mint']}: a rebase goes on a trade already scored")
+        need(t and abs(ev["recorded"] - t["running"]) < 1e-12, f"{ev['mint']}: recorded is the running rate the trade carries")
+        need(0 <= ev["now"] <= 1 and abs(ev["now"] - ev["recorded"]) > REBASE_EPS, f"{ev['mint']}: now is a rate and differs from recorded")
     elif e == "belief":
         need(re.fullmatch(r"B\d+", ev["id"]) and C_MIN <= ev["c"] <= C_MAX, f"{ev['id']}: id B<n>, c inside [{C_MIN}, {C_MAX}]")
         text(ev, "because", *(() if ev["id"] in beliefs else ("claim",)))
@@ -312,7 +331,7 @@ def add(events):
     past, staged, today = J.read(MODE), [], C.today()
     for ev in events:
         ev = dict(ev, at=C.stamp())
-        if ev["e"] == "trade":                                  # a trade's check reads no belief or forecast: no fold
+        if ev["e"] in ("trade", "rebase"):                      # neither reads a belief or forecast: no fold
             check(ev, {}, {}, today, past + staged)
             staged.append(ev)
             continue
