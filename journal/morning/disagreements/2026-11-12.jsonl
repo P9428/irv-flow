@@ -1,0 +1,1 @@
+{"at": "2026-11-12T11:01:16+00:00", "field": "flow_signals_per_day", "first_seen": "2026-11-12", "id": "D-0016", "model": 3.5, "model_src": "src/common.py FLOW_RATE_SPENT (docs/findings/F01-spent-baseline.md)", "observed": "77 FLOW signals over 39 full days", "observed_src": "journal/live/ sealed day-files"}
